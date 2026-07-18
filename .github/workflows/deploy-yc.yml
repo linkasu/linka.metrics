@@ -34,6 +34,8 @@ jobs:
       IDENTITY_JWKS_URL: ${{ vars.IDENTITY_JWKS_URL }}
       IDENTITY_TOKEN_ISSUER: ${{ vars.IDENTITY_TOKEN_ISSUER }}
       IDENTITY_TELEMETRY_AUDIENCE: ${{ vars.IDENTITY_TELEMETRY_AUDIENCE }}
+      COLLECTOR_PUBLIC_URL: ${{ vars.COLLECTOR_PUBLIC_URL }}
+      YC_API_GATEWAY_ID: ${{ vars.YC_API_GATEWAY_ID }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,10 +49,12 @@ jobs:
           test -n "$IDENTITY_JWKS_URL"
           test -n "$IDENTITY_TOKEN_ISSUER"
           test -n "$IDENTITY_TELEMETRY_AUDIENCE"
-          test -n "${{ vars.GATEWAY_RATE_LIMIT_POLICY_ID }}"
+          test -n "$COLLECTOR_PUBLIC_URL"
+          test -n "$YC_API_GATEWAY_ID"
           test -n "${{ vars.INSTALLATION_HMAC_ACTIVE_KEY_ID }}"
           test -n "${{ vars.INSTALLATION_HMAC_PREVIOUS_KEY_ID }}"
           case "$IDENTITY_JWKS_URL" in https://*) ;; *) exit 1 ;; esac
+          case "$COLLECTOR_PUBLIC_URL" in https://*) ;; *) exit 1 ;; esac
       - name: Install YC CLI
         run: curl -fsSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash -s -- -a
       - name: Configure service account
@@ -64,6 +68,25 @@ jobs:
           "$HOME/yandex-cloud/bin/yc" config set service-account-key /tmp/yc-key.json
           "$HOME/yandex-cloud/bin/yc" config set cloud-id "$YC_CLOUD_ID"
           "$HOME/yandex-cloud/bin/yc" config set folder-id "$YC_FOLDER_ID"
+      - name: Verify gateway ingress limit
+        run: |
+          spec="$("$HOME/yandex-cloud/bin/yc" serverless api-gateway get-spec \
+            --id "$YC_API_GATEWAY_ID" --format json | jq -er .openapi_spec)"
+          case "$spec" in
+            *rateLimit:*"rps: 100"*) ;;
+            *)
+              echo "::error::API Gateway must enforce a global 100 rps limit"
+              exit 1
+              ;;
+          esac
+      - name: Snapshot rollback target
+        id: rollback-target
+        run: |
+          container_id="$("$HOME/yandex-cloud/bin/yc" serverless container get \
+            --name linka-plays-metric-collector --format json | jq -er .id)"
+          revision_id="$("$HOME/yandex-cloud/bin/yc" serverless container revision list \
+            --container-id "$container_id" --format json | jq -er 'sort_by(.created_at) | last | .id')"
+          printf 'container_id=%s\nrevision_id=%s\n' "$container_id" "$revision_id" >> "$GITHUB_OUTPUT"
       - name: Mirror tested GHCR image to Yandex Registry
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -77,6 +100,7 @@ jobs:
             "ghcr.io/linkasu/linka.plays-metric-collector:$IMAGE_TAG"
 
       - name: Deploy mirrored image
+        id: deploy
         env:
           YC_REGISTRY_ID: ${{ secrets.YC_REGISTRY_ID }}
           YC_RUNTIME_SA_ID: ${{ secrets.YC_RUNTIME_SA_ID }}
@@ -84,7 +108,6 @@ jobs:
           YC_LOCKBOX_SECRET_VERSION_ID: ${{ secrets.YC_LOCKBOX_SECRET_VERSION_ID }}
           WRITER_URL: ${{ secrets.WRITER_URL }}
         run: |
-          trap 'rm -f /tmp/yc-key.json' EXIT
           "$HOME/yandex-cloud/bin/yc" serverless container revision deploy \
             --container-name linka-plays-metric-collector \
             --image "cr.yandex/$YC_REGISTRY_ID/linka-plays-metric-collector:$IMAGE_TAG" \
@@ -98,3 +121,28 @@ jobs:
             --secret "environment-variable=INSTALLATION_HMAC_PREVIOUS_SECRET,id=$YC_LOCKBOX_SECRET_ID,version-id=$YC_LOCKBOX_SECRET_VERSION_ID,key=installation_hmac_previous_secret" \
             --secret "environment-variable=WRITER_HMAC_SECRET,id=$YC_LOCKBOX_SECRET_ID,version-id=$YC_LOCKBOX_SECRET_VERSION_ID,key=writer_hmac_secret" \
             --secret "environment-variable=SERVICE_HMAC_ACTIVE_SECRET,id=$YC_LOCKBOX_SECRET_ID,version-id=$YC_LOCKBOX_SECRET_VERSION_ID,key=service_hmac_active_secret"
+      - name: Verify collector routes
+        run: |
+          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 \
+            "$COLLECTOR_PUBLIC_URL/healthz" | jq -e '.status == "ok"'
+
+          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --request POST "$COLLECTOR_PUBLIC_URL/v2/batches" \
+            --header 'Content-Type: application/json' --data '{}')"
+          test "$status" = 401
+
+          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --request POST "$COLLECTOR_PUBLIC_URL/v2/tokens" \
+            --header 'Content-Type: application/json' --data '{}')"
+          test "$status" = 404
+      - name: Roll back failed collector smoke
+        if: failure() && steps.deploy.outcome == 'success'
+        run: |
+          "$HOME/yandex-cloud/bin/yc" serverless container rollback \
+            --id "${{ steps.rollback-target.outputs.container_id }}" \
+            --revision-id "${{ steps.rollback-target.outputs.revision_id }}"
+          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 \
+            "$COLLECTOR_PUBLIC_URL/healthz" | jq -e '.status == "ok"'
+      - name: Remove deploy service-account key
+        if: always()
+        run: rm -f /tmp/yc-key.json

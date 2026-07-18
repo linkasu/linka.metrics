@@ -17,4 +17,4 @@ Serverless Containers обычно получает образы из Yandex Con
 
 Deploy CI service account получает `editor` только в выделенном metrics folder и direct `iam.serviceAccounts.user` на runtime account. Отдельный service account в shared folder сохраняет только доступ к bucket состояния. Создание ключей и их помещение в GitHub secrets выполняются вне Terraform, чтобы закрытые ключи не оказались в state.
 
-Production environment обязан задавать `GATEWAY_RATE_LIMIT_POLICY_ID`; deploy workflow останавливается без подтверждённой gateway/SWS policy. Минимум: 100 requests/second sustained, burst 200, body не более 512 KiB и alert при 80% folder quota. YC quota ceilings управляются на уровне folder и не описываются текущим Terraform provider.
+API Gateway применяет бесплатный глобальный лимит 100 requests/second из OpenAPI specification. Deploy workflow читает production gateway по `YC_API_GATEWAY_ID` и останавливается, если лимит отсутствует. Collector и writer независимо ограничивают тело batch до 512 KiB. Alert при 80% folder quota настраивается отдельно; YC quota ceilings не описываются текущим Terraform provider.
