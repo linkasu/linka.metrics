@@ -1,6 +1,6 @@
 # LINKa Plays Metric
 
-Сервис обезличенной технической телеметрии LINKa Plays. Репозиторий содержит три Go-бинаря:
+Сервис обезличенной технической, продуктовой и игровой телеметрии LINKa Plays. Репозиторий содержит три Go-бинаря:
 
 - `collector` выдаёт анонимный installation token, проверяет контракт v1 и синхронно пересылает batch в writer;
 - `writer` проверяет отдельную HMAC-подпись collector и записывает данные в ClickHouse;
@@ -63,7 +63,7 @@ Environment-файл задаёт `DISK_PATH`, `DISK_THRESHOLD_PERCENT=80`, `DIS
 ## Документация
 
 - [API v1](docs/api.md)
-- [Техническая политика приватности](docs/privacy.md)
+- [Политика приватности](docs/privacy.md)
 - [Terraform и bootstrap YC](infra/terraform/README.md)
 
 ## CI/CD
@@ -73,4 +73,4 @@ Environment-файл задаёт `DISK_PATH`, `DISK_THRESHOLD_PERCENT=80`, `DIS
 Необходимые GitHub secrets:
 
 - VPS: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`, `VPS_DEPLOY_PATH`;
-- YC: `YC_SA_KEY_JSON`, `YC_CLOUD_ID`, `YC_FOLDER_ID`, `YC_REGISTRY_ID`, `YC_RUNTIME_SA_ID`, `YC_LOCKBOX_SECRET_ID`, `YC_LOCKBOX_SECRET_VERSION_ID`, `WRITER_URL`.
+- YC: `YC_SA_KEY_JSON`, `YC_CLOUD_ID`, dedicated `YC_FOLDER_ID`, `YC_REGISTRY_ID`, `YC_RUNTIME_SA_ID`, `YC_LOCKBOX_SECRET_ID`, `YC_LOCKBOX_SECRET_VERSION_ID`, `WRITER_URL`.

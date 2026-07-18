@@ -1,5 +1,6 @@
 cloud_id                  = "b1gxxxxxxxxxxxxxxxxx"
 folder_id                 = "b1gxxxxxxxxxxxxxxxxx"
+metric_folder_id          = "b1gxxxxxxxxxxxxxxxxx"
 zone                      = "ru-central1-a"
 dns_zone_id               = "dnsxxxxxxxxxxxxxxxxx"
 collector_image_url       = "cr.yandex/<registry-id>/linka-plays-metric-collector:sha-<commit>"

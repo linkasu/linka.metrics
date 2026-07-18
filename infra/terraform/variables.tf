@@ -4,7 +4,12 @@ variable "cloud_id" {
 }
 
 variable "folder_id" {
-  description = "Yandex Cloud folder ID"
+  description = "Shared Yandex Cloud folder ID containing DNS, API Gateway, certificate, and Terraform state"
+  type        = string
+}
+
+variable "metric_folder_id" {
+  description = "Dedicated Yandex Cloud folder ID containing telemetry runtime and deployment resources"
   type        = string
 }
 

@@ -6,73 +6,77 @@ locals {
 }
 
 resource "yandex_container_registry" "metric" {
-  name = "linka-plays-metric"
+  provider = yandex.metric
+  name     = "linka-plays-metric-dedicated"
 }
 
 resource "yandex_iam_service_account" "runtime" {
-  name = "linka-plays-metric-runtime"
+  provider = yandex.metric
+  name     = "linka-plays-metric-runtime-dedicated"
 }
 
 resource "yandex_iam_service_account" "ci" {
-  name = "linka-plays-metric-ci"
+  provider = yandex.metric
+  name     = "linka-plays-metric-ci-dedicated"
+}
+
+resource "yandex_iam_service_account" "terraform_state" {
+  name        = "linka-plays-metric-terraform-state"
+  description = "Retained in the shared folder for access to the Terraform state bucket"
 }
 
 resource "yandex_resourcemanager_folder_iam_member" "runtime_lockbox" {
-  folder_id = var.folder_id
+  provider  = yandex.metric
+  folder_id = var.metric_folder_id
   role      = "lockbox.payloadViewer"
   member    = "serviceAccount:${yandex_iam_service_account.runtime.id}"
 }
 
 resource "yandex_resourcemanager_folder_iam_member" "runtime_invoker" {
-  folder_id = var.folder_id
+  provider  = yandex.metric
+  folder_id = var.metric_folder_id
   role      = "serverless-containers.containerInvoker"
   member    = "serviceAccount:${yandex_iam_service_account.runtime.id}"
 }
 
 resource "yandex_resourcemanager_folder_iam_member" "runtime_registry" {
-  folder_id = var.folder_id
+  provider  = yandex.metric
+  folder_id = var.metric_folder_id
   role      = "container-registry.images.puller"
   member    = "serviceAccount:${yandex_iam_service_account.runtime.id}"
 }
 
-resource "yandex_resourcemanager_folder_iam_member" "ci_registry" {
-  folder_id = var.folder_id
-  role      = "container-registry.images.pusher"
+resource "yandex_resourcemanager_folder_iam_member" "ci_editor" {
+  provider  = yandex.metric
+  folder_id = var.metric_folder_id
+  role      = "editor"
   member    = "serviceAccount:${yandex_iam_service_account.ci.id}"
 }
 
-resource "yandex_resourcemanager_folder_iam_member" "ci_containers" {
-  folder_id = var.folder_id
-  role      = "serverless-containers.editor"
-  member    = "serviceAccount:${yandex_iam_service_account.ci.id}"
-}
-
-resource "yandex_resourcemanager_folder_iam_member" "ci_use_service_accounts" {
-  folder_id = var.folder_id
-  role      = "iam.serviceAccounts.user"
-  member    = "serviceAccount:${yandex_iam_service_account.ci.id}"
+resource "yandex_iam_service_account_iam_member" "ci_use_runtime_service_account" {
+  provider           = yandex.metric
+  service_account_id = yandex_iam_service_account.runtime.id
+  role               = "iam.serviceAccounts.user"
+  member             = "serviceAccount:${yandex_iam_service_account.ci.id}"
 }
 
 resource "yandex_resourcemanager_folder_iam_member" "ci_terraform_state" {
   folder_id = var.folder_id
   role      = "storage.editor"
-  member    = "serviceAccount:${yandex_iam_service_account.ci.id}"
-}
-
-resource "yandex_resourcemanager_folder_iam_member" "ci_lockbox" {
-  folder_id = var.folder_id
-  role      = "lockbox.viewer"
-  member    = "serviceAccount:${yandex_iam_service_account.ci.id}"
+  member    = "serviceAccount:${yandex_iam_service_account.terraform_state.id}"
 }
 
 resource "yandex_lockbox_secret" "runtime" {
+  provider            = yandex.metric
   name                = "linka-plays-metric-runtime"
   deletion_protection = true
   description         = "Payload is created and rotated outside Terraform"
 }
 
 resource "yandex_serverless_container" "collector" {
+  provider           = yandex.metric
   name               = "linka-plays-metric-collector"
+  description        = "LINKa Plays telemetry collector in dedicated metrics folder"
   memory             = 256
   cores              = 1
   core_fraction      = 100

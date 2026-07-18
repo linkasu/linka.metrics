@@ -10,7 +10,7 @@
 
 ### `GET /privacy`
 
-Возвращает русский технический privacy-текст как `text/plain; charset=utf-8`.
+Возвращает русский текст политики приватности как `text/plain; charset=utf-8`.
 
 ### `POST /v1/installations`
 
