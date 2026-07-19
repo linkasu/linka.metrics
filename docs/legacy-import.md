@@ -32,7 +32,7 @@ IMPORT_SUBJECT_HMAC_SECRET=... linka-import-legacy --dry-run --input export.ndjs
 ```
 
 3. Compare exporter and importer event totals by product/kind/day.
-4. Run the published immutable importer image in the private ClickHouse network with the `metric_writer` credentials.
+4. Run the published immutable importer image in the private ClickHouse network with the `metric_writer` credentials. On a memory-constrained ClickHouse host, use `--batch-delay 500ms` so background part merges do not compete with sustained registry inserts.
 5. Repeat the same input to verify every batch reports as replayed rather than duplicated.
 6. Verify `datalens_product_v2` totals and perform a canary deletion for an isolated test subject.
 

@@ -60,6 +60,7 @@ type importer struct {
 	store      *metricclickhouse.Store
 	secret     []byte
 	dryRun     bool
+	batchDelay time.Duration
 	events     uint64
 	batches    uint64
 	replayed   uint64
@@ -79,7 +80,11 @@ func main() {
 func run() error {
 	inputPath := flag.String("input", "-", "strict NDJSON input path, or - for stdin")
 	dryRun := flag.Bool("dry-run", false, "validate and hash input without writing ClickHouse")
+	batchDelay := flag.Duration("batch-delay", 0, "pause after each newly written batch to limit ClickHouse merge pressure")
 	flag.Parse()
+	if *batchDelay < 0 {
+		return errors.New("batch-delay must not be negative")
+	}
 	secret, err := app.Secret("IMPORT_SUBJECT_HMAC_SECRET")
 	if err != nil {
 		return err
@@ -100,7 +105,7 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	worker := &importer{store: store, secret: secret, dryRun: *dryRun, current: make([]sourceEvent, 0, maxImportBatch), closedKeys: make(map[string]struct{})}
+	worker := &importer{store: store, secret: secret, dryRun: *dryRun, batchDelay: *batchDelay, current: make([]sourceEvent, 0, maxImportBatch), closedKeys: make(map[string]struct{})}
 	if err := worker.consume(ctx, input); err != nil {
 		return err
 	}
@@ -253,6 +258,14 @@ func (i *importer) flush(ctx context.Context) error {
 		}
 		if result.Replayed {
 			i.replayed++
+		} else if i.batchDelay > 0 {
+			timer := time.NewTimer(i.batchDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
 		}
 	}
 	clear(i.current)
