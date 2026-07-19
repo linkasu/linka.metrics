@@ -6,6 +6,10 @@
 
 Batch ограничен 512 KiB, 500 records, глубиной JSON 16 и одним typed stream: `common`, `technical`, `plays` или `product`. Decoder запрещает duplicate keys, unknown fields, trailing values и чрезмерную вложенность. Product, stream, kinds, states, pages, modes, locales, input methods, game categories, outcomes и game IDs проверяются по compile-time allowlists в `internal/product` и `internal/contract/v2`.
 
+`app.locale` принимает `ru`, `ru-RU`, `en`, `en-US` и privacy-safe агрегат `other`. Неподдерживаемый системный locale клиент обязан преобразовать в `other`, не передавая исходное значение. `plays.input_method` сохраняет значения `mouse`, `touch`, `gaze`, `keyboard`, а также принимает `unknown`, пока в сессии ещё не было ввода, и `mixed`, если в игровой сессии использовались gaze и mouse. `plays.game_category` принимает `unknown`, если категория ещё недоступна для direct-route или early session; поле остаётся обязательным.
+
+Для `plays.session_finished` допустимы клиентские итоговые outcomes `completed`, `incomplete`, `lost`, `draw`, `interrupted`, а также сохранённые для совместимости `cancelled` и `error`. Outcomes `success`, `mistake`, `hint`, `cancelled` у `plays.interaction` проверяются отдельным allowlist.
+
 `product` содержит только базовые metadata и закрытое product-specific значение `kind`. Произвольные `payload`, `attributes`, текстовые значения, URL, пути и пользовательские идентификаторы отсутствуют в контракте и отклоняются strict decoder.
 
 `sent_at` допускается от семи дней в прошлом до пяти минут в будущем. `occurred_at` должен быть в диапазоне от 30 дней до `sent_at` до пяти минут после него. Timestamp обязан быть RFC3339 с точностью не выше миллисекунд и попадать в storage range `[2020-01-01, 2100-01-01)`. Счётчики, duration и ratios имеют явные границы.
