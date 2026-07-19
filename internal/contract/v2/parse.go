@@ -287,10 +287,10 @@ func validatePlaysRecord(record PlaysRecord, sentAt time.Time, spec product.Spec
 	if !spec.AllowsGame(record.GameID) {
 		return ValidatedPlaysRecord{}, errors.New("game_id is not registered for product")
 	}
-	if !oneOf(record.GameCategory, "gaze-basics", "visual-search", "sequencing", "language-aac", "numeracy", "strategy", "continuous-control") {
+	if !oneOf(record.GameCategory, "gaze-basics", "visual-search", "sequencing", "language-aac", "numeracy", "strategy", "continuous-control", "unknown") {
 		return ValidatedPlaysRecord{}, errors.New("unknown game_category")
 	}
-	if !oneOf(record.InputMethod, "mouse", "touch", "gaze", "keyboard") {
+	if !oneOf(record.InputMethod, "mouse", "touch", "gaze", "keyboard", "unknown", "mixed") {
 		return ValidatedPlaysRecord{}, errors.New("unknown input_method")
 	}
 	if record.ValidGazeRatio != nil && (math.IsNaN(*record.ValidGazeRatio) || math.IsInf(*record.ValidGazeRatio, 0) || *record.ValidGazeRatio < 0 || *record.ValidGazeRatio > 1) {
@@ -302,7 +302,7 @@ func validatePlaysRecord(record PlaysRecord, sentAt time.Time, spec product.Spec
 			return ValidatedPlaysRecord{}, errors.New("session_started cannot contain outcome metrics")
 		}
 	case "session_finished":
-		if record.Outcome == nil || !oneOf(*record.Outcome, "completed", "interrupted", "cancelled", "error") || record.DurationMS == nil || *record.DurationMS > uint64((7*24*time.Hour).Milliseconds()) {
+		if record.Outcome == nil || !oneOf(*record.Outcome, "completed", "interrupted", "cancelled", "error", "incomplete", "lost", "draw") || record.DurationMS == nil || *record.DurationMS > uint64((7*24*time.Hour).Milliseconds()) {
 			return ValidatedPlaysRecord{}, errors.New("session_finished requires allowed outcome and bounded duration_ms")
 		}
 		if record.LevelIndex != nil {
@@ -359,7 +359,7 @@ func validateApp(app AppMetadata) error {
 	if !oneOf(app.Platform, "windows", "macos", "linux", "web", "android", "ios") {
 		return errors.New("unknown app.platform")
 	}
-	if !oneOf(app.Locale, "ru", "ru-RU", "en", "en-US") {
+	if !oneOf(app.Locale, "ru", "ru-RU", "en", "en-US", "other") {
 		return errors.New("unknown app.locale")
 	}
 	return nil

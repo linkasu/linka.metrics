@@ -48,6 +48,73 @@ func TestParseBatchAcceptsRegisteredProductKindsAndPlatforms(t *testing.T) {
 	}
 }
 
+func TestParseBatchAcceptsPlaysInputMethods(t *testing.T) {
+	for _, inputMethod := range []string{"mouse", "touch", "gaze", "keyboard", "unknown", "mixed"} {
+		t.Run(inputMethod, func(t *testing.T) {
+			batch, err := ParseBatch([]byte(validPlaysBatch(inputMethod)), testNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := batch.PlaysRecords[0].InputMethod; got != inputMethod {
+				t.Fatalf("input_method = %q, want %q", got, inputMethod)
+			}
+		})
+	}
+}
+
+func TestParseBatchAcceptsPlaysGameCategories(t *testing.T) {
+	for _, category := range []string{"gaze-basics", "visual-search", "sequencing", "language-aac", "numeracy", "strategy", "continuous-control", "unknown"} {
+		t.Run(category, func(t *testing.T) {
+			body := strings.Replace(validPlaysBatch("gaze"), `"game_category":"gaze-basics"`, fmt.Sprintf(`"game_category":%q`, category), 1)
+			batch, err := ParseBatch([]byte(body), testNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := batch.PlaysRecords[0].GameCategory; got != category {
+				t.Fatalf("game_category = %q, want %q", got, category)
+			}
+		})
+	}
+}
+
+func TestParseBatchAcceptsSessionFinishedOutcomes(t *testing.T) {
+	for _, outcome := range []string{"completed", "interrupted", "cancelled", "error", "incomplete", "lost", "draw"} {
+		t.Run(outcome, func(t *testing.T) {
+			finished := fmt.Sprintf(`"kind":"session_finished","outcome":%q,"duration_ms":1000`, outcome)
+			body := strings.Replace(validPlaysBatch("gaze"), `"kind":"session_started"`, finished, 1)
+			batch, err := ParseBatch([]byte(body), testNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := *batch.PlaysRecords[0].Outcome; got != outcome {
+				t.Fatalf("outcome = %q, want %q", got, outcome)
+			}
+		})
+	}
+}
+
+func TestParseBatchAcceptsAppLocales(t *testing.T) {
+	for _, locale := range []string{"ru", "ru-RU", "en", "en-US", "other"} {
+		t.Run(locale, func(t *testing.T) {
+			body := strings.Replace(validCommonBatch(), `"locale":"ru-RU"`, fmt.Sprintf(`"locale":%q`, locale), 1)
+			batch, err := ParseBatch([]byte(body), testNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := batch.CommonRecords[0].App.Locale; got != locale {
+				t.Fatalf("app.locale = %q, want %q", got, locale)
+			}
+		})
+	}
+}
+
+func TestParseBatchRejectsRawUnsupportedAppLocale(t *testing.T) {
+	body := strings.Replace(validCommonBatch(), `"locale":"ru-RU"`, `"locale":"de-DE"`, 1)
+	if _, err := ParseBatch([]byte(body), testNow); err == nil {
+		t.Fatal("raw unsupported app.locale was accepted instead of privacy-safe other")
+	}
+}
+
 func TestParseBatchRejectsCrossProductKindAndPayload(t *testing.T) {
 	tests := []string{
 		validProductBatch("linka-looks", "set_import", "windows"),
@@ -172,4 +239,25 @@ func validProductBatch(productID, kind, platform string) string {
     "app":{"version":"1.2.3","build":"42","platform":%q,"os_version":"1","locale":"ru-RU"}
   }]
 }`, productID, testOpaqueKey, kind, platform)
+}
+
+func validPlaysBatch(inputMethod string) string {
+	return fmt.Sprintf(`{
+  "schema_version":2,
+  "batch_id":"10000000-0000-4000-8000-000000000001",
+  "scope":{"product":"linka-plays","subject_key":%q},
+  "stream":"plays",
+  "sent_at":"2026-07-18T12:00:00.000Z",
+  "records":[{
+    "record_id":"20000000-0000-4000-8000-000000000002",
+    "occurred_at":"2026-07-18T11:59:00.000Z",
+    "kind":"session_started",
+    "app_session_id":"30000000-0000-4000-8000-000000000003",
+    "game_session_id":"40000000-0000-4000-8000-000000000004",
+    "app":{"version":"1.2.3","build":"42","platform":"linux","os_version":"6.8","locale":"ru-RU"},
+    "game_id":"aquarium",
+    "game_category":"gaze-basics",
+    "input_method":%q
+  }]
+}`, testOpaqueKey, inputMethod)
 }

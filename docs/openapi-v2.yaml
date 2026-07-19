@@ -231,7 +231,10 @@ components:
         build: { type: string, minLength: 1, maxLength: 96, pattern: '^[A-Za-z0-9][A-Za-z0-9._:+-]*$' }
         platform: { type: string, enum: [windows, macos, linux, web, android, ios] }
         os_version: { type: string, minLength: 1, maxLength: 96, pattern: '^[A-Za-z0-9][A-Za-z0-9._:+-]*$' }
-        locale: { type: string, enum: [ru, ru-RU, en, en-US] }
+        locale:
+          type: string
+          enum: [ru, ru-RU, en, en-US, other]
+          description: Use other instead of reporting an unsupported system locale.
     BatchBase:
       type: object
       required: [schema_version, batch_id, scope, stream, sent_at, records]
@@ -350,10 +353,16 @@ components:
             game_id:
               type: string
               description: Must exist in the linka-plays compile-time game registry.
-            game_category: { type: string, enum: [gaze-basics, visual-search, sequencing, language-aac, numeracy, strategy, continuous-control] }
-            input_method: { type: string, enum: [mouse, touch, gaze, keyboard] }
+            game_category:
+              type: string
+              enum: [gaze-basics, visual-search, sequencing, language-aac, numeracy, strategy, continuous-control, unknown]
+              description: Use unknown when the category is not available for a direct-route or early session.
+            input_method:
+              type: string
+              enum: [mouse, touch, gaze, keyboard, unknown, mixed]
+              description: unknown means no input was observed yet; mixed means both gaze and mouse were used in the game session.
             level_index: { type: integer, minimum: 0, maximum: 4294967295 }
-            outcome: { type: string, enum: [completed, interrupted, cancelled, error, success, mistake, hint] }
+            outcome: { type: string, enum: [completed, interrupted, cancelled, error, incomplete, lost, draw, success, mistake, hint] }
             duration_ms: { type: integer, minimum: 0, maximum: 604800000 }
             success_count: { type: integer, minimum: 0, maximum: 4294967295 }
             mistake_count: { type: integer, minimum: 0, maximum: 4294967295 }
