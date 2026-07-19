@@ -4,7 +4,9 @@
 
 Публичный collector предоставляет `POST /v2/batches` и `POST /v2/privacy/requests`. `POST /v2/tokens` является только staging compatibility route. Writer предоставляет соответствующие service-only endpoints `POST /internal/v2/batches` и `POST /internal/v2/privacy/requests`.
 
-Batch ограничен 512 KiB, 500 records, глубиной JSON 16 и одним typed stream: `common`, `technical` или `plays`. Decoder запрещает duplicate keys, unknown fields, trailing values и чрезмерную вложенность. Product, stream, kinds, states, pages, modes, locales, input methods, game categories, outcomes и game IDs проверяются по compile-time allowlists в `internal/product` и `internal/contract/v2`.
+Batch ограничен 512 KiB, 500 records, глубиной JSON 16 и одним typed stream: `common`, `technical`, `plays` или `product`. Decoder запрещает duplicate keys, unknown fields, trailing values и чрезмерную вложенность. Product, stream, kinds, states, pages, modes, locales, input methods, game categories, outcomes и game IDs проверяются по compile-time allowlists в `internal/product` и `internal/contract/v2`.
+
+`product` содержит только базовые metadata и закрытое product-specific значение `kind`. Произвольные `payload`, `attributes`, текстовые значения, URL, пути и пользовательские идентификаторы отсутствуют в контракте и отклоняются strict decoder.
 
 `sent_at` допускается от семи дней в прошлом до пяти минут в будущем. `occurred_at` должен быть в диапазоне от 30 дней до `sent_at` до пяти минут после него. Timestamp обязан быть RFC3339 с точностью не выше миллисекунд и попадать в storage range `[2020-01-01, 2100-01-01)`. Счётчики, duration и ratios имеют явные границы.
 
@@ -28,9 +30,9 @@ Writer сериализует check/write внутри процесса, а `rec
 
 ## Storage и retention
 
-Migrations `004+` создают checksum ledger, `ingest_batches_v2`, `privacy_suppressions_v2`, typed `common_events_v2`, `technical_events_v2`, `plays_events_v2` и safe DataLens views. Все V2 data tables partitioned по `ingested_at`; event time не управляет partition lifecycle. Raw opaque keys не выдаются DataLens, suppressed scopes исключаются во view.
+Migrations `004+` создают checksum ledger, `ingest_batches_v2`, `privacy_suppressions_v2`, typed `common_events_v2`, `technical_events_v2`, `plays_events_v2`, `product_events_v2` и safe DataLens views. Все V2 data tables partitioned по `ingested_at`; event time не управляет partition lifecycle. Raw opaque keys не выдаются DataLens, suppressed scopes исключаются во view.
 
-`RETENTION_V2_INGEST_BATCHES`, `RETENTION_V2_COMMON`, `RETENTION_V2_TECHNICAL`, `RETENTION_V2_PLAYS`, `RETENTION_V2_PRIVACY` принимают positive Go durations. Пустое значение оставляет `expires_at=NULL`. SQL TTL отсутствует и не должен добавляться до юридического утверждения сроков и отдельного operational review.
+`RETENTION_V2_INGEST_BATCHES`, `RETENTION_V2_COMMON`, `RETENTION_V2_TECHNICAL`, `RETENTION_V2_PLAYS`, `RETENTION_V2_PRODUCT`, `RETENTION_V2_PRIVACY` принимают positive Go durations. Пустое значение оставляет `expires_at=NULL`. SQL TTL отсутствует и не должен добавляться до юридического утверждения сроков и отдельного operational review.
 
 ## Privacy flow
 

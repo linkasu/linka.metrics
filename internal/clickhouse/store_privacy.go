@@ -175,7 +175,7 @@ func (s *Store) RetryPrivacyRequest(ctx context.Context, request privacy.Request
 func (s *Store) DeleteTelemetryRequest(ctx context.Context, request privacy.Request) error {
 	s.privacyMu.Lock()
 	defer s.privacyMu.Unlock()
-	tables := []string{"common_events_v2", "technical_events_v2", "plays_events_v2", "record_registry_v2", "ingest_batches_v2"}
+	tables := []string{"common_events_v2", "technical_events_v2", "plays_events_v2", "product_events_v2", "record_registry_v2", "ingest_batches_v2"}
 	if request.LegacyInstallationID != nil {
 		s.v1Mu.Lock()
 		defer s.v1Mu.Unlock()
@@ -212,12 +212,12 @@ func (s *Store) deleteTelemetryTable(ctx context.Context, request privacy.Reques
 		}
 		return s.insertDeletionProgress(ctx, request, table, "completed", attempts+1, now, nil, nil, &now)
 	}
-	condition := `product_key = ? AND (
+	condition := `product = ? AND product_key = ? AND (
 		subject_key = ? OR
 		(? != '' AND ifNull(person_key, '') = ?) OR
 		(? != '' AND ifNull(org_key, '') = ?)
 	)`
-	arguments := []any{request.ProductKey, scope.SubjectKey, stringValue(scope.PersonKey), stringValue(scope.PersonKey), stringValue(scope.OrgKey), stringValue(scope.OrgKey)}
+	arguments := []any{string(scope.Product), request.ProductKey, scope.SubjectKey, stringValue(scope.PersonKey), stringValue(scope.PersonKey), stringValue(scope.OrgKey), stringValue(scope.OrgKey)}
 	query := "ALTER TABLE " + table + " DELETE WHERE " + condition + " SETTINGS mutations_sync = 2"
 	if err := s.connection.Exec(ctx, query, arguments...); err != nil {
 		failureCode := "mutation_failed"

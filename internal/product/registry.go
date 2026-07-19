@@ -2,7 +2,15 @@ package product
 
 type ID string
 
-const LinkaPlays ID = "linka-plays"
+const (
+	LinkaPlays      ID = "linka-plays"
+	LinkaLooks      ID = "linka-looks"
+	LinkaPictures   ID = "linka-pictures"
+	LinkaType       ID = "linka-type"
+	LinkaPaperboard ID = "linka-paperboard"
+	LinkaSite       ID = "linka-site"
+	LinkaTTS        ID = "linka-tts"
+)
 
 type Stream string
 
@@ -10,13 +18,15 @@ const (
 	StreamCommon    Stream = "common"
 	StreamTechnical Stream = "technical"
 	StreamPlays     Stream = "plays"
+	StreamProduct   Stream = "product"
 )
 
 type Spec struct {
-	ID        ID
-	OpaqueKey string
-	streams   map[Stream]struct{}
-	gameIDs   map[string]struct{}
+	ID           ID
+	OpaqueKey    string
+	streams      map[Stream]struct{}
+	gameIDs      map[string]struct{}
+	productKinds map[string]struct{}
 }
 
 var registry = map[ID]Spec{
@@ -49,6 +59,56 @@ var registry = map[ID]Spec{
 			"snow-trail", "robot-vacuum", "garden-watering", "space-orbit",
 		),
 	},
+	LinkaLooks: {
+		ID: LinkaLooks, OpaqueKey: "a2aea6a7de105d4001e90f53cb24388163609c7721eb947d24327432c21901df",
+		streams: streamSet(StreamProduct),
+		productKinds: stringSet(
+			"start", "platformDetected", "openSettings", "openSet", "openFolder", "openEditor", "openTobiiCalibration",
+			"cardClick", "toggleOutputLine", "toggleGazeLock", "share", "move", "trash", "editorAddImage", "editorAddAudio",
+			"settingsToggleEyeExit", "settingsToggleEyeChoose", "settingsToggleEyeActivation", "settingsToggleEyePagination",
+			"settingsToggleKeyboardActivation", "settingsToggleJoystickActivation", "settingsToggleTypeSound",
+			"settingsToggleMouseActivation", "settingsTogglePageTurnMode", "settingsToggleEyeScale", "settingsSetTimeout",
+			"tobiiCalibrationStart", "tobiiCalibrationPoint", "tobiiCalibrationFinish", "tobiiCalibrationCancel",
+			"tobiiCalibrationError", "tobiiCalibrationApplySaved", "tobiiCalibrationApplySavedResult", "tobiiCalibrationUnavailable",
+			"updateAvailable", "updateDownloaded", "updateError", "updateInstallConfirmed",
+		),
+	},
+	LinkaPictures: {
+		ID: LinkaPictures, OpaqueKey: "070210b29cd1c08ceb82a8c631463765db84aceed4a73181bf9d2e0e99968a58",
+		streams: streamSet(StreamProduct),
+		productKinds: stringSet(
+			"app_open", "open_set", "edit_set", "create_set", "open_settings", "open_grid_settings", "resize_grid",
+			"set_without_space", "add_card", "add_set", "card_select", "set_list_open", "set_open", "set_import",
+			"set_export", "output_speak", "direct_play", "playback_failed", "quiz_answer", "match_pair", "editor_open",
+			"set_save", "parent_code_check", "non_fatal_error",
+		),
+	},
+	LinkaType: {
+		ID: LinkaType, OpaqueKey: "074a5e8a5a5b103c9d7057f284eb3418d91870ced0941f9374edefdd78c6a6c8",
+		streams: streamSet(StreamProduct),
+		productKinds: stringSet(
+			"app_open", "predicator_use", "spotlight", "say", "quickes_say", "bank_cselect", "bank_sselect", "login",
+			"logout", "register", "update_prompt_shown", "update_accepted", "mobile_app_prompt_shown",
+			"mobile_app_link_clicked", "bank_cache_started", "bank_cache_completed", "download_category_cache",
+			"realtime_sync", "realtime_sync_error", "dialog_mode_opened", "dialog_mode_closed", "dialog_chat_create",
+			"dialog_chat_select", "dialog_chat_delete", "dialog_message_send", "dialog_record_start", "dialog_record_stop",
+		),
+	},
+	LinkaPaperboard: {
+		ID: LinkaPaperboard, OpaqueKey: "faaa4e383af4af3c458ce9178d4a87c2e2f314407e70807555507b71467031e1",
+		streams:      streamSet(StreamProduct),
+		productKinds: stringSet("app_open", "board_open", "settings_open", "symbol_selected", "phrase_spoken"),
+	},
+	LinkaSite: {
+		ID: LinkaSite, OpaqueKey: "a1fd852a6ad52468c6ad95b47df33966052a4fc3ff44334e5bcfc4f03e24c372",
+		streams:      streamSet(StreamProduct),
+		productKinds: stringSet("page_view"),
+	},
+	LinkaTTS: {
+		ID: LinkaTTS, OpaqueKey: "821617fc2acf9c0e033286139584ae3ae920a85c18e04927df929784883f9b8e",
+		streams:      streamSet(StreamProduct),
+		productKinds: stringSet("tts_generated"),
+	},
 }
 
 func Lookup(id ID) (Spec, bool) {
@@ -64,6 +124,19 @@ func (s Spec) AllowsStream(stream Stream) bool {
 func (s Spec) AllowsGame(gameID string) bool {
 	_, ok := s.gameIDs[gameID]
 	return ok
+}
+
+func (s Spec) AllowsProductKind(kind string) bool {
+	_, ok := s.productKinds[kind]
+	return ok
+}
+
+func streamSet(values ...Stream) map[Stream]struct{} {
+	result := make(map[Stream]struct{}, len(values))
+	for _, value := range values {
+		result[value] = struct{}{}
+	}
+	return result
 }
 
 func stringSet(values ...string) map[string]struct{} {

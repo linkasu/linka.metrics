@@ -21,3 +21,7 @@ output "lockbox_secret_id" {
 output "collector_url" {
   value = "https://${local.collector_domain}"
 }
+
+output "legacy_collector_url" {
+  value = "https://${local.legacy_collector_domain}"
+}

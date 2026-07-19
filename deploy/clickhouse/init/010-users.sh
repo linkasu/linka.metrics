@@ -35,6 +35,7 @@ clickhouse-client \
     GRANT INSERT ON linka_metric.common_events_v2 TO metric_writer;
     GRANT INSERT ON linka_metric.technical_events_v2 TO metric_writer;
     GRANT INSERT ON linka_metric.plays_events_v2 TO metric_writer;
+    GRANT INSERT ON linka_metric.product_events_v2 TO metric_writer;
     GRANT SELECT, INSERT ON linka_metric.record_registry_v2 TO metric_writer;
     GRANT SELECT, INSERT ON linka_metric.privacy_suppressions_v2 TO metric_privacy;
     GRANT SELECT, INSERT ON linka_metric.privacy_deletion_progress_v2 TO metric_privacy;
@@ -43,6 +44,7 @@ clickhouse-client \
     GRANT ALTER DELETE ON linka_metric.common_events_v2 TO metric_privacy;
     GRANT ALTER DELETE ON linka_metric.technical_events_v2 TO metric_privacy;
     GRANT ALTER DELETE ON linka_metric.plays_events_v2 TO metric_privacy;
+    GRANT ALTER DELETE ON linka_metric.product_events_v2 TO metric_privacy;
     GRANT ALTER DELETE ON linka_metric.events TO metric_privacy;
     GRANT ALTER DELETE ON linka_metric.session_summaries TO metric_privacy;
     GRANT SELECT ON linka_metric.datalens_events TO datalens;
@@ -50,4 +52,9 @@ clickhouse-client \
     GRANT SELECT ON linka_metric.datalens_common_v2 TO datalens;
     GRANT SELECT ON linka_metric.datalens_technical_v2 TO datalens;
     GRANT SELECT ON linka_metric.datalens_plays_v2 TO datalens;
+    GRANT SELECT ON linka_metric.datalens_product_v2 TO datalens;
+    GRANT SELECT ON linka_metric.datalens_common_v3 TO datalens;
+    GRANT SELECT ON linka_metric.datalens_technical_v3 TO datalens;
+    GRANT SELECT ON linka_metric.datalens_plays_v3 TO datalens;
+    GRANT SELECT ON linka_metric.datalens_game_sessions_v3 TO datalens;
   "

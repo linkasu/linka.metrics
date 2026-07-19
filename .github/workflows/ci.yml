@@ -73,3 +73,15 @@ jobs:
           push: false
           build-args: BINARY=${{ matrix.binary }}
           tags: linka.plays-metric-${{ matrix.binary }}:ci
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive
+        working-directory: infra/terraform
+      - name: Validate Terraform
+        run: terraform init -backend=false && terraform validate
+        working-directory: infra/terraform

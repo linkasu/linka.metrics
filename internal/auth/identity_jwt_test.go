@@ -21,14 +21,17 @@ func (s staticJWKS) Keys(context.Context, bool) (map[string]ed25519.PublicKey, e
 func TestIdentityJWTVerifierChecksSignatureAudienceScopeAndLifetime(t *testing.T) {
 	seed := []byte(strings.Repeat("s", 32))
 	privateKey := ed25519.NewKeyFromSeed(seed)
-	verifier, err := NewIdentityJWTVerifierWithSource(staticJWKS{"active": privateKey.Public().(ed25519.PublicKey)}, "identity.test", "linka-metric", 15*time.Minute)
+	verifier, err := NewIdentityJWTVerifierWithSource(staticJWKS{"active": privateKey.Public().(ed25519.PublicKey)}, "identity.test", map[product.ID]string{
+		product.LinkaPlays: "linka-plays-metric",
+		product.LinkaLooks: "linka-looks-metric",
+	}, 15*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	verifier.now = func() time.Time { return now }
 	claims := IdentityJWTClaims{
-		Issuer: "identity.test", Subject: strings.Repeat("a", 64), Audience: "linka-metric", Product: product.LinkaPlays,
+		Issuer: "identity.test", Subject: strings.Repeat("a", 64), Audience: "linka-plays-metric", Product: product.LinkaPlays,
 		SubjectType: "installation", Scopes: []string{"telemetry:write"}, IssuedAt: now.Unix(), ExpiresAt: now.Add(5 * time.Minute).Unix(),
 		TokenID: "10000000-0000-4000-8000-000000000001",
 	}
@@ -54,6 +57,31 @@ func TestIdentityJWTVerifierChecksSignatureAudienceScopeAndLifetime(t *testing.T
 	missingSubjectType.SubjectType = ""
 	if _, err := verifier.Verify(context.Background(), signIdentityJWT(t, privateKey, "active", missingSubjectType), "telemetry:write"); err == nil {
 		t.Fatal("missing subject type was accepted")
+	}
+}
+
+func TestIdentityJWTVerifierUsesProductSpecificAudience(t *testing.T) {
+	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("a", 32)))
+	verifier, err := NewIdentityJWTVerifierWithSource(staticJWKS{"active": privateKey.Public().(ed25519.PublicKey)}, "identity.test", map[product.ID]string{
+		product.LinkaPlays: "linka-plays-metric",
+		product.LinkaLooks: "linka-looks-metric",
+	}, 15*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
+	verifier.now = func() time.Time { return now }
+	claims := IdentityJWTClaims{
+		Issuer: "identity.test", Subject: strings.Repeat("a", 64), Audience: "linka-looks-metric", Product: product.LinkaLooks,
+		SubjectType: "installation", Scopes: []string{"telemetry:write"}, IssuedAt: now.Unix(), ExpiresAt: now.Add(5 * time.Minute).Unix(),
+		TokenID: "10000000-0000-4000-8000-000000000001",
+	}
+	if _, err := verifier.Verify(context.Background(), signIdentityJWT(t, privateKey, "active", claims), "telemetry:write"); err != nil {
+		t.Fatal(err)
+	}
+	claims.Audience = "linka-plays-metric"
+	if _, err := verifier.Verify(context.Background(), signIdentityJWT(t, privateKey, "active", claims), "telemetry:write"); err == nil {
+		t.Fatal("audience from another product was accepted")
 	}
 }
 

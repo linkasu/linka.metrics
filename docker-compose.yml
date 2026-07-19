@@ -28,7 +28,9 @@ services:
       - ./migrations/008_v1_privacy.sql:/docker-entrypoint-initdb.d/008_v1_privacy.sql:ro
       - ./migrations/009_v2_batch_reservations.sql:/docker-entrypoint-initdb.d/009_v2_batch_reservations.sql:ro
       - ./migrations/010_v2_registry_privacy_scope.sql:/docker-entrypoint-initdb.d/010_v2_registry_privacy_scope.sql:ro
-      - ./deploy/clickhouse/init/010-users.sh:/docker-entrypoint-initdb.d/010-users.sh:ro
+      - ./migrations/011_v2_product_stream.sql:/docker-entrypoint-initdb.d/011_v2_product_stream.sql:ro
+      - ./migrations/012_v2_datalens_multi_product_views.sql:/docker-entrypoint-initdb.d/012_v2_datalens_multi_product_views.sql:ro
+      - ./deploy/clickhouse/init/010-users.sh:/docker-entrypoint-initdb.d/900-users.sh:ro
       - ./deploy/clickhouse/config.d/resources.xml:/etc/clickhouse-server/config.d/resources.xml:ro
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --user \"$$CLICKHOUSE_USER\" --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1' >/dev/null"]
@@ -65,6 +67,7 @@ services:
       RETENTION_V2_COMMON: ${RETENTION_V2_COMMON:-}
       RETENTION_V2_TECHNICAL: ${RETENTION_V2_TECHNICAL:-}
       RETENTION_V2_PLAYS: ${RETENTION_V2_PLAYS:-}
+      RETENTION_V2_PRODUCT: ${RETENTION_V2_PRODUCT:-}
       RETENTION_V2_PRIVACY: ${RETENTION_V2_PRIVACY:-}
     expose:
       - "8081"

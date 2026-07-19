@@ -17,8 +17,47 @@ func TestParseBatchAcceptsOneTypedStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if batch.RecordCount() != 1 || len(batch.CommonRecords) != 1 || len(batch.TechnicalRecords) != 0 || len(batch.PlaysRecords) != 0 {
+	if batch.RecordCount() != 1 || len(batch.CommonRecords) != 1 || len(batch.TechnicalRecords) != 0 || len(batch.PlaysRecords) != 0 || len(batch.ProductRecords) != 0 {
 		t.Fatalf("unexpected typed batch: %+v", batch)
+	}
+}
+
+func TestParseBatchAcceptsRegisteredProductKindsAndPlatforms(t *testing.T) {
+	tests := []struct {
+		product  string
+		kind     string
+		platform string
+	}{
+		{"linka-looks", "start", "windows"},
+		{"linka-pictures", "set_import", "android"},
+		{"linka-type", "say", "web"},
+		{"linka-paperboard", "board_open", "ios"},
+		{"linka-site", "page_view", "web"},
+		{"linka-tts", "tts_generated", "linux"},
+	}
+	for _, test := range tests {
+		t.Run(test.product, func(t *testing.T) {
+			batch, err := ParseBatch([]byte(validProductBatch(test.product, test.kind, test.platform)), testNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if batch.RecordCount() != 1 || len(batch.ProductRecords) != 1 {
+				t.Fatalf("unexpected product batch: %+v", batch)
+			}
+		})
+	}
+}
+
+func TestParseBatchRejectsCrossProductKindAndPayload(t *testing.T) {
+	tests := []string{
+		validProductBatch("linka-looks", "set_import", "windows"),
+		strings.Replace(validProductBatch("linka-type", "say", "web"), `"kind":"say"`, `"kind":"say","text":"private"`, 1),
+		strings.Replace(validProductBatch("linka-type", "say", "web"), `"kind":"say"`, `"kind":"say","attributes":{"word":"private"}`, 1),
+	}
+	for _, body := range tests {
+		if _, err := ParseBatch([]byte(body), testNow); err == nil {
+			t.Fatal("unsafe product batch was accepted")
+		}
 	}
 }
 
@@ -116,4 +155,21 @@ func validCommonBatch() string {
     "app":{"version":"1.2.3","build":"42","platform":"linux","os_version":"6.8","locale":"ru-RU"}
   }]
 }`, testOpaqueKey)
+}
+
+func validProductBatch(productID, kind, platform string) string {
+	return fmt.Sprintf(`{
+  "schema_version":2,
+  "batch_id":"10000000-0000-4000-8000-000000000001",
+  "scope":{"product":%q,"subject_key":%q},
+  "stream":"product",
+  "sent_at":"2026-07-18T12:00:00.000Z",
+  "records":[{
+    "record_id":"20000000-0000-4000-8000-000000000002",
+    "occurred_at":"2026-07-18T11:59:00.000Z",
+    "kind":%q,
+    "app_session_id":"30000000-0000-4000-8000-000000000003",
+    "app":{"version":"1.2.3","build":"42","platform":%q,"os_version":"1","locale":"ru-RU"}
+  }]
+}`, productID, testOpaqueKey, kind, platform)
 }

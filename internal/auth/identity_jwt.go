@@ -40,25 +40,32 @@ type JWKSKeySource interface {
 type IdentityJWTVerifier struct {
 	source      JWKSKeySource
 	issuer      string
-	audience    string
+	audiences   map[product.ID]string
 	maxLifetime time.Duration
 	maxSkew     time.Duration
 	now         func() time.Time
 }
 
-func NewIdentityJWTVerifier(jwksURL, issuer, audience string, maxLifetime time.Duration, allowHTTP bool) (*IdentityJWTVerifier, error) {
+func NewIdentityJWTVerifier(jwksURL, issuer string, audiences map[product.ID]string, maxLifetime time.Duration, allowHTTP bool) (*IdentityJWTVerifier, error) {
 	source, err := NewHTTPJWKS(jwksURL, allowHTTP)
 	if err != nil {
 		return nil, err
 	}
-	return NewIdentityJWTVerifierWithSource(source, issuer, audience, maxLifetime)
+	return NewIdentityJWTVerifierWithSource(source, issuer, audiences, maxLifetime)
 }
 
-func NewIdentityJWTVerifierWithSource(source JWKSKeySource, issuer, audience string, maxLifetime time.Duration) (*IdentityJWTVerifier, error) {
-	if source == nil || issuer == "" || audience == "" || maxLifetime <= 0 || maxLifetime > time.Hour {
+func NewIdentityJWTVerifierWithSource(source JWKSKeySource, issuer string, audiences map[product.ID]string, maxLifetime time.Duration) (*IdentityJWTVerifier, error) {
+	if source == nil || issuer == "" || len(audiences) == 0 || maxLifetime <= 0 || maxLifetime > time.Hour {
 		return nil, errors.New("invalid Identity JWT verifier configuration")
 	}
-	return &IdentityJWTVerifier{source: source, issuer: issuer, audience: audience, maxLifetime: maxLifetime, maxSkew: 30 * time.Second, now: time.Now}, nil
+	configured := make(map[product.ID]string, len(audiences))
+	for productID, audience := range audiences {
+		if _, ok := product.Lookup(productID); !ok || strings.TrimSpace(audience) == "" {
+			return nil, errors.New("invalid Identity JWT product audience")
+		}
+		configured[productID] = audience
+	}
+	return &IdentityJWTVerifier{source: source, issuer: issuer, audiences: configured, maxLifetime: maxLifetime, maxSkew: 30 * time.Second, now: time.Now}, nil
 }
 
 func (v *IdentityJWTVerifier) Verify(ctx context.Context, encoded, requiredScope string) (IdentityJWTClaims, error) {
@@ -105,7 +112,7 @@ func (v *IdentityJWTVerifier) Verify(ctx context.Context, encoded, requiredScope
 	now := v.now().UTC()
 	issuedAt := time.Unix(claims.IssuedAt, 0)
 	expiresAt := time.Unix(claims.ExpiresAt, 0)
-	if claims.Issuer != v.issuer || claims.Audience != v.audience || claims.Subject == "" || !opaqueKey(claims.Subject) ||
+	if claims.Issuer != v.issuer || claims.Subject == "" || !opaqueKey(claims.Subject) ||
 		claims.TokenID == "" || !canonicalUUID(claims.TokenID) || issuedAt.After(now.Add(v.maxSkew)) || !expiresAt.After(now) ||
 		!expiresAt.After(issuedAt) || expiresAt.Sub(issuedAt) > v.maxLifetime || !containsScope(claims.Scopes, requiredScope) ||
 		!validIdentitySubjectType(claims.SubjectType) {
@@ -113,6 +120,9 @@ func (v *IdentityJWTVerifier) Verify(ctx context.Context, encoded, requiredScope
 	}
 	if _, ok := product.Lookup(claims.Product); !ok {
 		return IdentityJWTClaims{}, errors.New("unknown Identity JWT product")
+	}
+	if audience, ok := v.audiences[claims.Product]; !ok || claims.Audience != audience {
+		return IdentityJWTClaims{}, errors.New("invalid Identity JWT audience for product")
 	}
 	for _, key := range []*string{claims.PersonKey, claims.OrgKey} {
 		if key != nil && !opaqueKey(*key) {

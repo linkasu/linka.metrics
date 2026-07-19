@@ -3,6 +3,7 @@ package migrations
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +90,30 @@ func TestFrozenV1MigrationChecksums(t *testing.T) {
 		if checksum, ok := want[migration.Version]; ok && migration.Checksum != checksum {
 			t.Fatalf("frozen V1 migration %03d changed: got %s", migration.Version, migration.Checksum)
 		}
+	}
+}
+
+func TestMultiProductMigrationsAreEmbedded(t *testing.T) {
+	migrations, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest := migrations[len(migrations)-1]; latest.Version != 12 || latest.Name != "012_v2_datalens_multi_product_views.sql" {
+		t.Fatalf("latest migration = %03d %s", latest.Version, latest.Name)
+	}
+	var productSQL, datalensSQL string
+	for _, migration := range migrations {
+		switch migration.Version {
+		case 11:
+			productSQL = strings.Join(migration.Statements, "\n")
+		case 12:
+			datalensSQL = strings.Join(migration.Statements, "\n")
+		}
+	}
+	if !strings.Contains(productSQL, "product_events_v2") || !strings.Contains(productSQL, "datalens_product_v2") {
+		t.Fatal("product stream migration is incomplete")
+	}
+	if !strings.Contains(datalensSQL, "datalens_common_v3") || !strings.Contains(datalensSQL, "datalens_game_sessions_v3") {
+		t.Fatal("multi-product DataLens migration is incomplete")
 	}
 }
