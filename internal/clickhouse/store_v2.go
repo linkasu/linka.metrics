@@ -89,9 +89,11 @@ func (s *Store) registerRecordsV2(ctx context.Context, batch v2.ValidatedBatch, 
 	for _, record := range batch.ProductRecords {
 		recordIDs = append(recordIDs, uuid.MustParse(record.RecordID))
 	}
+	// Retried registry rows have the same batch and body. Reading every matching
+	// version avoids an expensive FINAL merge while preserving conflict checks.
 	rows, err := s.connection.Query(ctx, `
 		SELECT batch_id, body_sha256
-		FROM record_registry_v2 FINAL
+		FROM record_registry_v2
 		WHERE product = ? AND record_id IN (?)`, string(batch.Header.Scope.Product), recordIDs)
 	if err != nil {
 		return fmt.Errorf("query v2 record registry: %w", err)
