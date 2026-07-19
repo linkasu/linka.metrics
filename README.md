@@ -1,6 +1,6 @@
-# LINKa Plays Metric
+# LINKa Metrics
 
-Сервис обезличенной технической, продуктовой и игровой телеметрии LINKa Plays. Репозиторий содержит пять Go-бинарей:
+Единый multi-product сервис обезличенной технической, продуктовой и игровой телеметрии LINKa. Поддерживаемые продукты регистрируются закрытым compile-time allowlist; произвольные события и payload не принимаются. Репозиторий содержит пять Go-бинарей:
 
 - `collector` выдаёт анонимный installation token, проверяет контракт v1 и синхронно пересылает batch в writer;
 - `writer` проверяет отдельную HMAC-подпись collector и записывает данные в ClickHouse;
@@ -41,7 +41,7 @@ SUBJECT_KEY_HMAC_SECRET='local-stable-subject-secret-at-least-32-bytes' \
 go run ./cmd/collector
 ```
 
-Production instead requires `IDENTITY_JWKS_URL` (HTTPS), exact `IDENTITY_TOKEN_ISSUER` and `IDENTITY_TELEMETRY_AUDIENCE`; legacy token minting cannot be enabled in production.
+Production instead requires `IDENTITY_JWKS_URL` (HTTPS), exact `IDENTITY_TOKEN_ISSUER` and product-specific `IDENTITY_TELEMETRY_AUDIENCES_JSON` (or its base64 form); legacy token minting cannot be enabled in production. Canonical public endpoint is `https://metrics.nkolinka.ru`.
 
 ## Контейнеры
 
@@ -85,4 +85,4 @@ Environment-файл задаёт `DISK_PATH`, `DISK_THRESHOLD_PERCENT=80`, `DIS
 - VPS: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`, `VPS_DEPLOY_PATH`, `CLICKHOUSE_DATALENS_PASSWORD`;
 - YC: `YC_SA_KEY_JSON`, `YC_CLOUD_ID`, dedicated `YC_FOLDER_ID`, `YC_REGISTRY_ID`, `YC_RUNTIME_SA_ID`, `YC_LOCKBOX_SECRET_ID`, `YC_LOCKBOX_SECRET_VERSION_ID`, `WRITER_URL`.
 
-Production YC environment variables: `IDENTITY_JWKS_URL`, `IDENTITY_TOKEN_ISSUER`, `IDENTITY_TELEMETRY_AUDIENCE`.
+Production YC environment variables: `IDENTITY_JWKS_URL`, `IDENTITY_TOKEN_ISSUER`, `IDENTITY_TELEMETRY_AUDIENCES_JSON`, `CORS_ALLOWED_ORIGINS` and `COLLECTOR_PUBLIC_URL`.

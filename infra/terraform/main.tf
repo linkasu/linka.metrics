@@ -1,8 +1,9 @@
 locals {
-  collector_domain = "plays-metric.nkolinka.ru"
-  writer_domain    = "plays-metric-writer.nkolinka.ru"
-  db_domain        = "plays-metric-db.nkolinka.ru"
-  vps_ipv4         = "37.230.192.57"
+  collector_domain        = "metrics.nkolinka.ru"
+  legacy_collector_domain = "plays-metric.nkolinka.ru"
+  writer_domain           = "plays-metric-writer.nkolinka.ru"
+  db_domain               = "plays-metric-db.nkolinka.ru"
+  vps_ipv4                = "37.230.192.57"
 }
 
 resource "yandex_container_registry" "metric" {
@@ -91,17 +92,18 @@ resource "yandex_serverless_container" "collector" {
   image {
     url = var.collector_image_url
     environment = {
-      LISTEN_ADDR                       = ":8080"
-      WRITER_URL                        = var.writer_url
-      SERVICE_HMAC_ACTIVE_KEY_ID        = var.service_hmac_active_key_id
-      DEPLOYMENT_ENVIRONMENT            = "production"
-      INSTALLATION_TOKEN_MAX_AGE        = "720h"
-      INSTALLATION_HMAC_ACTIVE_KEY_ID   = var.installation_hmac_active_key_id
-      INSTALLATION_HMAC_PREVIOUS_KEY_ID = var.installation_hmac_previous_key_id
-      IDENTITY_JWKS_URL                 = var.identity_jwks_url
-      IDENTITY_TOKEN_ISSUER             = var.identity_token_issuer
-      IDENTITY_TELEMETRY_AUDIENCE       = var.identity_telemetry_audience
-      IDENTITY_TOKEN_MAX_LIFETIME       = "15m"
+      LISTEN_ADDR                         = ":8080"
+      WRITER_URL                          = var.writer_url
+      SERVICE_HMAC_ACTIVE_KEY_ID          = var.service_hmac_active_key_id
+      DEPLOYMENT_ENVIRONMENT              = "production"
+      INSTALLATION_TOKEN_MAX_AGE          = "720h"
+      INSTALLATION_HMAC_ACTIVE_KEY_ID     = var.installation_hmac_active_key_id
+      INSTALLATION_HMAC_PREVIOUS_KEY_ID   = var.installation_hmac_previous_key_id
+      IDENTITY_JWKS_URL                   = var.identity_jwks_url
+      IDENTITY_TOKEN_ISSUER               = var.identity_token_issuer
+      IDENTITY_TELEMETRY_AUDIENCES_BASE64 = base64encode(jsonencode(var.identity_telemetry_audiences))
+      IDENTITY_TOKEN_MAX_LIFETIME         = "15m"
+      CORS_ALLOWED_ORIGINS                = var.cors_allowed_origins
     }
   }
 
@@ -145,6 +147,16 @@ resource "yandex_serverless_container" "collector" {
 
 resource "yandex_cm_certificate" "collector" {
   name    = "linka-plays-metric"
+  domains = [local.legacy_collector_domain]
+
+  managed {
+    challenge_type  = "DNS_CNAME"
+    challenge_count = 1
+  }
+}
+
+resource "yandex_cm_certificate" "collector_canonical" {
+  name    = "linka-metrics"
   domains = [local.collector_domain]
 
   managed {
@@ -162,18 +174,32 @@ resource "yandex_dns_recordset" "certificate_validation" {
   data    = [yandex_cm_certificate.collector.challenges[count.index].dns_value]
 }
 
+resource "yandex_dns_recordset" "canonical_certificate_validation" {
+  count   = yandex_cm_certificate.collector_canonical.managed[0].challenge_count
+  zone_id = var.dns_zone_id
+  name    = yandex_cm_certificate.collector_canonical.challenges[count.index].dns_name
+  type    = yandex_cm_certificate.collector_canonical.challenges[count.index].dns_type
+  ttl     = 60
+  data    = [yandex_cm_certificate.collector_canonical.challenges[count.index].dns_value]
+}
+
 resource "yandex_api_gateway" "metric" {
   name = "linka-plays-metric"
 
   custom_domains {
     fqdn           = local.collector_domain
+    certificate_id = yandex_cm_certificate.collector_canonical.id
+  }
+
+  custom_domains {
+    fqdn           = local.legacy_collector_domain
     certificate_id = yandex_cm_certificate.collector.id
   }
 
   spec = <<-YAML
     openapi: 3.0.0
     info:
-      title: LINKa Plays Metric
+      title: LINKa Metrics
       version: 1.0.0
     x-yc-apigateway:
       rateLimit:
@@ -205,11 +231,20 @@ resource "yandex_api_gateway" "metric" {
 
   depends_on = [
     yandex_dns_recordset.certificate_validation,
+    yandex_dns_recordset.canonical_certificate_validation,
     yandex_resourcemanager_folder_iam_member.runtime_invoker,
   ]
 }
 
 resource "yandex_dns_recordset" "collector" {
+  zone_id = var.dns_zone_id
+  name    = "${local.legacy_collector_domain}."
+  type    = "CNAME"
+  ttl     = 300
+  data    = ["${trimsuffix(yandex_api_gateway.metric.domain, ".")}."]
+}
+
+resource "yandex_dns_recordset" "collector_canonical" {
   zone_id = var.dns_zone_id
   name    = "${local.collector_domain}."
   type    = "CNAME"

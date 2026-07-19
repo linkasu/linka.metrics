@@ -86,6 +86,22 @@ func ParseBatch(data []byte, now time.Time) (ValidatedBatch, error) {
 			}
 			validated.PlaysRecords = append(validated.PlaysRecords, parsed)
 		}
+	case product.StreamProduct:
+		var batch ProductBatch
+		if err := jsonstrict.DecodeObject(data, &batch, MaxJSONDepth); err != nil {
+			return ValidatedBatch{}, fmt.Errorf("decode product batch: %w", err)
+		}
+		if err := validateRecordCount(len(batch.Records)); err != nil {
+			return ValidatedBatch{}, err
+		}
+		validated.ProductRecords = make([]ValidatedProductRecord, 0, len(batch.Records))
+		for index, record := range batch.Records {
+			parsed, err := validateProductRecord(record, validated.SentAtTime, spec)
+			if err != nil {
+				return ValidatedBatch{}, fmt.Errorf("records[%d]: %w", index, err)
+			}
+			validated.ProductRecords = append(validated.ProductRecords, parsed)
+		}
 	default:
 		return ValidatedBatch{}, errors.New("unknown stream")
 	}
@@ -110,6 +126,12 @@ func validateUniqueRecordIDs(batch ValidatedBatch) error {
 		seen[record.RecordID] = struct{}{}
 	}
 	for _, record := range batch.PlaysRecords {
+		if _, exists := seen[record.RecordID]; exists {
+			return errors.New("duplicate record_id in batch")
+		}
+		seen[record.RecordID] = struct{}{}
+	}
+	for _, record := range batch.ProductRecords {
 		if _, exists := seen[record.RecordID]; exists {
 			return errors.New("duplicate record_id in batch")
 		}
@@ -297,6 +319,17 @@ func validatePlaysRecord(record PlaysRecord, sentAt time.Time, spec product.Spec
 	return ValidatedPlaysRecord{PlaysRecord: record, OccurredAtTime: occurredAt}, nil
 }
 
+func validateProductRecord(record ProductRecord, sentAt time.Time, spec product.Spec) (ValidatedProductRecord, error) {
+	occurredAt, err := validateBaseRecord(record.RecordID, record.OccurredAt, record.AppSessionID, record.App, sentAt)
+	if err != nil {
+		return ValidatedProductRecord{}, err
+	}
+	if !spec.AllowsProductKind(record.Kind) {
+		return ValidatedProductRecord{}, errors.New("product kind is not registered for product")
+	}
+	return ValidatedProductRecord{ProductRecord: record, OccurredAtTime: occurredAt}, nil
+}
+
 func validateBaseRecord(recordID, occurredAt, appSessionID string, app AppMetadata, sentAt time.Time) (time.Time, error) {
 	if err := validateUUID(recordID); err != nil {
 		return time.Time{}, fmt.Errorf("record_id: %w", err)
@@ -323,7 +356,7 @@ func validateApp(app AppMetadata) error {
 			return fmt.Errorf("%s contains an unsafe or empty value", name)
 		}
 	}
-	if !oneOf(app.Platform, "windows", "macos", "linux") {
+	if !oneOf(app.Platform, "windows", "macos", "linux", "web", "android", "ios") {
 		return errors.New("unknown app.platform")
 	}
 	if !oneOf(app.Locale, "ru", "ru-RU", "en", "en-US") {

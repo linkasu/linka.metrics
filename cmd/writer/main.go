@@ -89,6 +89,7 @@ func loadRetention() (metricclickhouse.Retention, error) {
 		{"RETENTION_V2_COMMON", &result.Common},
 		{"RETENTION_V2_TECHNICAL", &result.Technical},
 		{"RETENTION_V2_PLAYS", &result.Plays},
+		{"RETENTION_V2_PRODUCT", &result.Product},
 		{"RETENTION_V2_PRIVACY", &result.Privacy},
 	}
 	for _, value := range values {

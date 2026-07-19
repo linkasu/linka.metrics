@@ -85,6 +85,14 @@ type PlaysRecord struct {
 	ValidGazeRatio *float64    `json:"valid_gaze_ratio,omitempty"`
 }
 
+type ProductRecord struct {
+	RecordID     string      `json:"record_id"`
+	OccurredAt   string      `json:"occurred_at"`
+	Kind         string      `json:"kind"`
+	AppSessionID string      `json:"app_session_id"`
+	App          AppMetadata `json:"app"`
+}
+
 type CommonBatch struct {
 	BatchHeader
 	Records []CommonRecord `json:"records"`
@@ -98,6 +106,11 @@ type TechnicalBatch struct {
 type PlaysBatch struct {
 	BatchHeader
 	Records []PlaysRecord `json:"records"`
+}
+
+type ProductBatch struct {
+	BatchHeader
+	Records []ProductRecord `json:"records"`
 }
 
 type ValidatedCommonRecord struct {
@@ -115,6 +128,11 @@ type ValidatedPlaysRecord struct {
 	OccurredAtTime time.Time
 }
 
+type ValidatedProductRecord struct {
+	ProductRecord
+	OccurredAtTime time.Time
+}
+
 type ValidatedBatch struct {
 	Header           BatchHeader
 	SentAtTime       time.Time
@@ -122,10 +140,11 @@ type ValidatedBatch struct {
 	CommonRecords    []ValidatedCommonRecord
 	TechnicalRecords []ValidatedTechnicalRecord
 	PlaysRecords     []ValidatedPlaysRecord
+	ProductRecords   []ValidatedProductRecord
 }
 
 func (b ValidatedBatch) RecordCount() int {
-	return len(b.CommonRecords) + len(b.TechnicalRecords) + len(b.PlaysRecords)
+	return len(b.CommonRecords) + len(b.TechnicalRecords) + len(b.PlaysRecords) + len(b.ProductRecords)
 }
 
 type IngestResult struct {

@@ -9,12 +9,61 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"strings"
 	"time"
 )
 
 func IsJSON(request *http.Request) bool {
 	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	return err == nil && mediaType == "application/json"
+}
+
+func CORS(origins []string) func(http.Handler) http.Handler {
+	allowed := make(map[string]struct{}, len(origins))
+	for _, origin := range origins {
+		allowed[origin] = struct{}{}
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			origin := request.Header.Get("Origin")
+			if origin == "" {
+				next.ServeHTTP(response, request)
+				return
+			}
+			if _, ok := allowed[origin]; !ok {
+				WriteError(response, http.StatusForbidden, "origin_not_allowed")
+				return
+			}
+			response.Header().Set("Access-Control-Allow-Origin", origin)
+			response.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			response.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key")
+			response.Header().Set("Access-Control-Max-Age", "600")
+			response.Header().Add("Vary", "Origin")
+			if request.Method == http.MethodOptions {
+				if request.Header.Get("Access-Control-Request-Method") != http.MethodPost || !allowedCORSHeaders(request.Header.Get("Access-Control-Request-Headers")) {
+					WriteError(response, http.StatusForbidden, "cors_preflight_not_allowed")
+					return
+				}
+				response.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(response, request)
+		})
+	}
+}
+
+func allowedCORSHeaders(value string) bool {
+	if strings.TrimSpace(value) == "" {
+		return true
+	}
+	allowed := map[string]struct{}{"authorization": {}, "content-type": {}, "idempotency-key": {}}
+	requested := strings.Split(strings.ToLower(value), ",")
+	for _, header := range requested {
+		if _, ok := allowed[strings.TrimSpace(header)]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func DecodeStrict(data []byte, destination any) error {

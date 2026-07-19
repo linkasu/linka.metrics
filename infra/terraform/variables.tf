@@ -73,10 +73,24 @@ variable "identity_token_issuer" {
   }
 }
 
-variable "identity_telemetry_audience" {
-  description = "Exact telemetry audience expected in LINKa Identity JWTs"
+variable "identity_telemetry_audiences" {
+  description = "Exact product-to-audience map expected in LINKa Identity JWTs"
+  type        = map(string)
+  default = {
+    linka-plays      = "linka-plays-metric"
+    linka-looks      = "linka-looks-metric"
+    linka-pictures   = "linka-pictures-metric"
+    linka-type       = "linka-type-metric"
+    linka-paperboard = "linka-paperboard-metric"
+    linka-site       = "linka-site-metric"
+    linka-tts        = "linka-tts-metric"
+  }
+}
+
+variable "cors_allowed_origins" {
+  description = "Exact semicolon-separated HTTPS origins allowed to call the public collector from browsers"
   type        = string
-  default     = "linka-plays-metric"
+  default     = "https://linka.su;https://linkatype.web.app"
 }
 
 variable "lockbox_secret_version_id" {

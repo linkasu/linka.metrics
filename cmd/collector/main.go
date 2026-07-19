@@ -1,14 +1,21 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/linkasu/linka.plays-metric/internal/app"
 	"github.com/linkasu/linka.plays-metric/internal/auth"
 	"github.com/linkasu/linka.plays-metric/internal/collector"
+	"github.com/linkasu/linka.plays-metric/internal/httpx"
+	"github.com/linkasu/linka.plays-metric/internal/product"
 )
 
 func main() {
@@ -111,7 +118,7 @@ func run(logger *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		audience, err := app.Env("IDENTITY_TELEMETRY_AUDIENCE")
+		audiences, err := identityAudiences()
 		if err != nil {
 			return err
 		}
@@ -122,7 +129,7 @@ func run(logger *slog.Logger) error {
 				return err
 			}
 		}
-		identityVerifier, err = auth.NewIdentityJWTVerifier(jwksURL, issuer, audience, maxLifetime, deploymentEnvironment == "staging")
+		identityVerifier, err = auth.NewIdentityJWTVerifier(jwksURL, issuer, audiences, maxLifetime, deploymentEnvironment == "staging")
 		if err != nil {
 			return err
 		}
@@ -135,7 +142,69 @@ func run(logger *slog.Logger) error {
 	if address == "" {
 		address = ":8080"
 	}
-	return app.Serve(address, collector.NewServerWithIdentityV2(
-		writerClient, writerClient, tokens, identityVerifier, productTokens, legacyEnabled, logger,
-	), logger)
+	handler := collector.NewServerWithIdentityV2(writerClient, writerClient, tokens, identityVerifier, productTokens, legacyEnabled, logger)
+	origins, err := corsOrigins(deploymentEnvironment)
+	if err != nil {
+		return err
+	}
+	return app.Serve(address, httpx.CORS(origins)(handler), logger)
+}
+
+func identityAudiences() (map[product.ID]string, error) {
+	value := os.Getenv("IDENTITY_TELEMETRY_AUDIENCES_JSON")
+	if value == "" {
+		encoded := os.Getenv("IDENTITY_TELEMETRY_AUDIENCES_BASE64")
+		if encoded != "" {
+			decoded, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				return nil, errors.New("IDENTITY_TELEMETRY_AUDIENCES_BASE64 is invalid")
+			}
+			value = string(decoded)
+		}
+	}
+	if value == "" {
+		legacy, err := app.Env("IDENTITY_TELEMETRY_AUDIENCE")
+		if err != nil {
+			return nil, errors.New("IDENTITY_TELEMETRY_AUDIENCES_JSON is required")
+		}
+		return map[product.ID]string{product.LinkaPlays: legacy}, nil
+	}
+	var raw map[string]string
+	if err := json.Unmarshal([]byte(value), &raw); err != nil || len(raw) == 0 {
+		return nil, errors.New("IDENTITY_TELEMETRY_AUDIENCES_JSON must be a non-empty JSON object")
+	}
+	result := make(map[product.ID]string, len(raw))
+	for id, audience := range raw {
+		productID := product.ID(id)
+		if _, ok := product.Lookup(productID); !ok || strings.TrimSpace(audience) == "" {
+			return nil, errors.New("IDENTITY_TELEMETRY_AUDIENCES_JSON contains an invalid product or audience")
+		}
+		result[productID] = audience
+	}
+	return result, nil
+}
+
+func corsOrigins(environment string) ([]string, error) {
+	value := os.Getenv("CORS_ALLOWED_ORIGINS")
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, ";")
+	result := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		origin := strings.TrimSpace(part)
+		parsed, err := url.Parse(origin)
+		loopback := parsed != nil && parsed.Scheme == "http" && (parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost" || parsed.Hostname() == "::1")
+		if err != nil || parsed == nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" ||
+			(parsed.Scheme != "https" && !(environment == "staging" && loopback)) {
+			return nil, errors.New("CORS_ALLOWED_ORIGINS must contain exact HTTPS origins")
+		}
+		if _, duplicate := seen[origin]; duplicate {
+			continue
+		}
+		seen[origin] = struct{}{}
+		result = append(result, origin)
+	}
+	return result, nil
 }

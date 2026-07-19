@@ -38,7 +38,7 @@ func TestV2StoreIdempotencyAndSuppressionIntegration(t *testing.T) {
 	subjectKey := hex.EncodeToString(subjectDigest[:])
 	batchID := uuid.NewString()
 	recordID := uuid.NewString()
-	body := integrationBatch(batchID, recordID, subjectKey, now, "1")
+	body := integrationProductBatch(batchID, recordID, subjectKey, now, "1")
 	batch, err := v2.ParseBatch(body, now)
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestV2StoreIdempotencyAndSuppressionIntegration(t *testing.T) {
 	if err != nil || !result.Replayed {
 		t.Fatalf("replay result = %+v, error = %v", result, err)
 	}
-	changedBody := integrationBatch(batchID, uuid.NewString(), subjectKey, now, "2")
+	changedBody := integrationProductBatch(batchID, uuid.NewString(), subjectKey, now, "2")
 	changedBatch, err := v2.ParseBatch(changedBody, now)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestV2StoreIdempotencyAndSuppressionIntegration(t *testing.T) {
 	if _, err := store.InsertV2(ctx, changedBatch, v2.BodySHA256(changedBody)); !errors.Is(err, v2.ErrIdempotencyConflict) {
 		t.Fatalf("changed body error = %v", err)
 	}
-	duplicateBody := integrationBatch(uuid.NewString(), recordID, subjectKey, now, "1")
+	duplicateBody := integrationProductBatch(uuid.NewString(), recordID, subjectKey, now, "1")
 	duplicateBatch, err := v2.ParseBatch(duplicateBody, now)
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestV2StoreIdempotencyAndSuppressionIntegration(t *testing.T) {
 		t.Fatalf("duplicate record error = %v", err)
 	}
 
-	privacyBody := []byte(fmt.Sprintf(`{"schema_version":2,"request_id":%q,"scope":{"product":"linka-plays","subject_key":%q},"action":"delete","requested_at":%q}`,
+	privacyBody := []byte(fmt.Sprintf(`{"schema_version":2,"request_id":%q,"scope":{"product":"linka-looks","subject_key":%q},"action":"delete","requested_at":%q}`,
 		uuid.NewString(), subjectKey, now.Format(time.RFC3339)))
 	privacyRequest, err := v2.ParsePrivacyRequest(privacyBody, now)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestV2StoreIdempotencyAndSuppressionIntegration(t *testing.T) {
 		t.Fatalf("privacy result = %+v, error = %v", privacyResult, err)
 	}
 
-	suppressedBody := integrationBatch(uuid.NewString(), uuid.NewString(), subjectKey, now, "1")
+	suppressedBody := integrationProductBatch(uuid.NewString(), uuid.NewString(), subjectKey, now, "1")
 	suppressedBatch, err := v2.ParseBatch(suppressedBody, now)
 	if err != nil {
 		t.Fatal(err)
@@ -110,14 +110,14 @@ func TestV2StoreIdempotencyAndSuppressionIntegration(t *testing.T) {
 	var progressCount uint64
 	if err := store.connection.QueryRow(ctx, `
 		SELECT count() FROM privacy_deletion_progress_v2 FINAL
-		WHERE request_id = ? AND status = 'completed'`, uuid.MustParse(privacyRequest.RequestID)).Scan(&progressCount); err != nil || progressCount != 5 {
+		WHERE request_id = ? AND status = 'completed'`, uuid.MustParse(privacyRequest.RequestID)).Scan(&progressCount); err != nil || progressCount != 6 {
 		t.Fatalf("completed privacy table progress = %d, error = %v", progressCount, err)
 	}
 	var eventCount uint64
-	if err := store.connection.QueryRow(ctx, `SELECT count() FROM common_events_v2 WHERE record_id = ?`, uuid.MustParse(batch.CommonRecords[0].RecordID)).Scan(&eventCount); err != nil || eventCount != 0 {
+	if err := store.connection.QueryRow(ctx, `SELECT count() FROM product_events_v2 WHERE record_id = ?`, uuid.MustParse(batch.ProductRecords[0].RecordID)).Scan(&eventCount); err != nil || eventCount != 0 {
 		t.Fatalf("remaining deleted records = %d, error = %v", eventCount, err)
 	}
-	if err := store.connection.QueryRow(ctx, `SELECT count() FROM record_registry_v2 WHERE record_id = ?`, uuid.MustParse(batch.CommonRecords[0].RecordID)).Scan(&eventCount); err != nil || eventCount != 0 {
+	if err := store.connection.QueryRow(ctx, `SELECT count() FROM record_registry_v2 WHERE record_id = ?`, uuid.MustParse(batch.ProductRecords[0].RecordID)).Scan(&eventCount); err != nil || eventCount != 0 {
 		t.Fatalf("remaining deleted record registry rows = %d, error = %v", eventCount, err)
 	}
 }
@@ -305,6 +305,23 @@ func integrationBatch(batchID, recordID, subjectKey string, now time.Time, versi
     "kind":"app_started",
     "app_session_id":%q,
     "app":{"version":%q,"build":"1","platform":"linux","os_version":"1","locale":"ru"}
+  }]
+}`, batchID, subjectKey, now.Format(time.RFC3339), recordID, now.Add(-time.Minute).Format(time.RFC3339), uuid.NewString(), version))
+}
+
+func integrationProductBatch(batchID, recordID, subjectKey string, now time.Time, version string) []byte {
+	return []byte(fmt.Sprintf(`{
+  "schema_version":2,
+  "batch_id":%q,
+  "scope":{"product":"linka-looks","subject_key":%q},
+  "stream":"product",
+  "sent_at":%q,
+  "records":[{
+    "record_id":%q,
+    "occurred_at":%q,
+    "kind":"start",
+    "app_session_id":%q,
+    "app":{"version":%q,"build":"1","platform":"windows","os_version":"11","locale":"ru"}
   }]
 }`, batchID, subjectKey, now.Format(time.RFC3339), recordID, now.Add(-time.Minute).Format(time.RFC3339), uuid.NewString(), version))
 }

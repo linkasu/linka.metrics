@@ -27,6 +27,7 @@ type Retention struct {
 	Common        time.Duration
 	Technical     time.Duration
 	Plays         time.Duration
+	Product       time.Duration
 	Privacy       time.Duration
 }
 
