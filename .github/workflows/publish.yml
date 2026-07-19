@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        binary: [collector, writer, disk-alert, migrate, privacy-worker]
+        binary: [collector, writer, disk-alert, migrate, privacy-worker, import-legacy]
     steps:
       - uses: actions/checkout@v4
         with:

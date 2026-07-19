@@ -68,9 +68,10 @@ var registry = map[ID]Spec{
 			"settingsToggleEyeExit", "settingsToggleEyeChoose", "settingsToggleEyeActivation", "settingsToggleEyePagination",
 			"settingsToggleKeyboardActivation", "settingsToggleJoystickActivation", "settingsToggleTypeSound",
 			"settingsToggleMouseActivation", "settingsTogglePageTurnMode", "settingsToggleEyeScale", "settingsSetTimeout",
+			"settingsToggleAnimation",
 			"tobiiCalibrationStart", "tobiiCalibrationPoint", "tobiiCalibrationFinish", "tobiiCalibrationCancel",
 			"tobiiCalibrationError", "tobiiCalibrationApplySaved", "tobiiCalibrationApplySavedResult", "tobiiCalibrationUnavailable",
-			"updateAvailable", "updateDownloaded", "updateError", "updateInstallConfirmed",
+			"updateAvailable", "updateDownloaded", "updateError", "updateInstallConfirmed", "deploySmoke",
 		),
 	},
 	LinkaPictures: {

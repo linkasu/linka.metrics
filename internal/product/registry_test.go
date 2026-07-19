@@ -38,4 +38,7 @@ func TestRegistryRejectsCrossProductKinds(t *testing.T) {
 	if looks.AllowsProductKind("set_import") || pictures.AllowsProductKind("openTobiiCalibration") {
 		t.Fatal("registry accepted a kind from another product")
 	}
+	if !looks.AllowsProductKind("settingsToggleAnimation") || !looks.AllowsProductKind("deploySmoke") {
+		t.Fatal("legacy Looks kinds are absent")
+	}
 }
