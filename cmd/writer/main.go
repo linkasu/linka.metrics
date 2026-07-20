@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -51,7 +50,7 @@ func run(logger *slog.Logger) error {
 	if database == "" {
 		database = "linka_metric"
 	}
-	retentionConfig, err := loadRetention()
+	retentionConfig, err := app.LoadRetention()
 	if err != nil {
 		return err
 	}
@@ -77,39 +76,4 @@ func run(logger *slog.Logger) error {
 		address = ":8081"
 	}
 	return app.Serve(address, writer.NewServerWithV2(store, store, writerSecret, serviceVerifier, logger, 5*time.Minute), logger)
-}
-
-func loadRetention() (metricclickhouse.Retention, error) {
-	var result metricclickhouse.Retention
-	values := []struct {
-		name        string
-		destination *time.Duration
-	}{
-		{"RETENTION_V2_INGEST_BATCHES", &result.IngestBatches},
-		{"RETENTION_V2_COMMON", &result.Common},
-		{"RETENTION_V2_TECHNICAL", &result.Technical},
-		{"RETENTION_V2_PLAYS", &result.Plays},
-		{"RETENTION_V2_PRODUCT", &result.Product},
-		{"RETENTION_V2_PRIVACY", &result.Privacy},
-	}
-	for _, value := range values {
-		duration, err := retention(value.name)
-		if err != nil {
-			return metricclickhouse.Retention{}, err
-		}
-		*value.destination = duration
-	}
-	return result, nil
-}
-
-func retention(name string) (time.Duration, error) {
-	value := os.Getenv(name)
-	if value == "" {
-		return 0, nil
-	}
-	duration, err := time.ParseDuration(value)
-	if err != nil || duration <= 0 {
-		return 0, fmt.Errorf("%s must be a positive Go duration", name)
-	}
-	return duration, nil
 }

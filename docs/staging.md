@@ -7,7 +7,7 @@
 Перед первым запуском:
 
 1. Создайте отдельный env-файл с правами `0600` вне Git.
-2. Оставьте все `RETENTION_V2_*` пустыми, пока сроки не утверждены.
+2. Заполните все `RETENTION_V2_*` утверждёнными сроками: `4320h` (180 дней) для raw events, batches и registry, `26280h` (3 года) для privacy tables. Пустое значение означает `expires_at=NULL`, и такие строки не удаляются никогда.
 3. Запустите ClickHouse и примените migrations командой `docker compose --profile migration run --rm migrate`.
 4. Выполните `deploy/clickhouse/preflight.sh`, затем примените least-privilege grants через `deploy/clickhouse/configure-v2-users.sh`.
 5. Запустите writer, collector и только затем профиль `privacy`.
@@ -21,4 +21,4 @@ Runner не использует Terraform и не читает state. Terraform
 
 ## Runtime gates
 
-Не включайте active-active writer/worker до появления distributed claim lock. Production обязан использовать HTTPS Identity JWKS с exact issuer/audience; legacy `/v2/tokens` разрешён только при `DEPLOYMENT_ENVIRONMENT=staging` и `ALLOW_LEGACY_PRODUCT_TOKENS=true`. Не активируйте SQL TTL только потому, что заполнен `expires_at`: это отдельное юридическое и operational решение.
+Не включайте active-active writer/worker до появления distributed claim lock. Production обязан использовать HTTPS Identity JWKS с exact issuer/audience; legacy `/v2/tokens` разрешён только при `DEPLOYMENT_ENVIRONMENT=staging` и `ALLOW_LEGACY_PRODUCT_TOKENS=true`. SQL TTL активен с migration `013` и управляется только через `expires_at`: заполненные `RETENTION_V2_*` обязательны в production, исторические NULL-строки backfill'ятся отдельным operational шагом.

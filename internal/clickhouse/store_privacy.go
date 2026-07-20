@@ -248,9 +248,10 @@ func (s *Store) insertDeletionProgress(ctx context.Context, request privacy.Requ
 	availableAt time.Time, leaseUntil *time.Time, lastError *string, completedAt *time.Time) error {
 	err := s.connection.Exec(ctx, `INSERT INTO privacy_deletion_progress_v2 (
 		request_id, product, table_name, status, attempts, available_at, lease_until,
-		last_error, updated_at, completed_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, uuid.MustParse(request.RequestID), string(request.Scope.Product), table,
-		status, attempts, availableAt, leaseUntil, lastError, privacyStatusVersion(request, status, attempts), completedAt)
+		last_error, updated_at, completed_at, expires_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, uuid.MustParse(request.RequestID), string(request.Scope.Product), table,
+		status, attempts, availableAt, leaseUntil, lastError, privacyStatusVersion(request, status, attempts), completedAt,
+		expiresAt(s.now().UTC(), s.retention.DeletionProgress))
 	if err != nil {
 		return fmt.Errorf("insert privacy deletion progress for %s: %w", table, err)
 	}

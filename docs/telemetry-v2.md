@@ -36,7 +36,7 @@ Writer сериализует check/write внутри процесса, а `rec
 
 Migrations `004+` создают checksum ledger, `ingest_batches_v2`, `privacy_suppressions_v2`, typed `common_events_v2`, `technical_events_v2`, `plays_events_v2`, `product_events_v2` и safe DataLens views. Все V2 data tables partitioned по `ingested_at`; event time не управляет partition lifecycle. Raw opaque keys не выдаются DataLens, suppressed scopes исключаются во view.
 
-`RETENTION_V2_INGEST_BATCHES`, `RETENTION_V2_COMMON`, `RETENTION_V2_TECHNICAL`, `RETENTION_V2_PLAYS`, `RETENTION_V2_PRODUCT`, `RETENTION_V2_PRIVACY` принимают positive Go durations. Пустое значение оставляет `expires_at=NULL`. SQL TTL отсутствует и не должен добавляться до юридического утверждения сроков и отдельного operational review.
+`RETENTION_V2_INGEST_BATCHES`, `RETENTION_V2_COMMON`, `RETENTION_V2_TECHNICAL`, `RETENTION_V2_PLAYS`, `RETENTION_V2_PRODUCT`, `RETENTION_V2_PRIVACY`, `RETENTION_V2_REGISTRY`, `RETENTION_V2_DELETION_PROGRESS` принимают positive Go durations и обязательны в production. Утверждённые сроки: 180 дней (`4320h`) для raw event tables, `ingest_batches_v2` и `record_registry_v2`; 3 года (`26280h`) для `privacy_suppressions_v2` и `privacy_deletion_progress_v2`. Migration `013_v2_ttl.sql` включает SQL `TTL expires_at` на всех восьми таблицах и добавляет expiry-фильтр в DataLens views, потому что TTL удаляет строки лениво при merge. ClickHouse никогда не удаляет строки с `expires_at IS NULL`: исторические строки, записанные до заполнения retention, требуют отдельного operational backfill `expires_at`. Backup ClickHouse следует собственному расписанию и не заменяет TTL.
 
 ## Privacy flow
 

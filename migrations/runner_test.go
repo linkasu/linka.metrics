@@ -98,7 +98,7 @@ func TestMultiProductMigrationsAreEmbedded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest := migrations[len(migrations)-1]; latest.Version != 12 || latest.Name != "012_v2_datalens_multi_product_views.sql" {
+	if latest := migrations[len(migrations)-1]; latest.Version != 13 || latest.Name != "013_v2_ttl.sql" {
 		t.Fatalf("latest migration = %03d %s", latest.Version, latest.Name)
 	}
 	var productSQL, datalensSQL string

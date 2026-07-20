@@ -23,12 +23,14 @@ type Config struct {
 }
 
 type Retention struct {
-	IngestBatches time.Duration
-	Common        time.Duration
-	Technical     time.Duration
-	Plays         time.Duration
-	Product       time.Duration
-	Privacy       time.Duration
+	IngestBatches    time.Duration
+	Common           time.Duration
+	Technical        time.Duration
+	Plays            time.Duration
+	Product          time.Duration
+	Privacy          time.Duration
+	Registry         time.Duration
+	DeletionProgress time.Duration
 }
 
 type Store struct {

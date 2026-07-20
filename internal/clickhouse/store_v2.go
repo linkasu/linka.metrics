@@ -115,14 +115,15 @@ func (s *Store) registerRecordsV2(ctx context.Context, batch v2.ValidatedBatch, 
 	}
 	registry, err := s.connection.PrepareBatch(ctx, `INSERT INTO record_registry_v2 (
 		product, record_id, batch_id, stream, body_sha256, registered_at,
-		product_key, subject_key, person_key, org_key
+		product_key, subject_key, person_key, org_key, expires_at
 	)`)
 	if err != nil {
 		return fmt.Errorf("prepare v2 record registry: %w", err)
 	}
 	for _, recordID := range recordIDs {
 		if err := registry.Append(string(batch.Header.Scope.Product), recordID, batchID, string(batch.Header.Stream), bodySHA, registeredAt,
-			&batch.ProductKey, &batch.Header.Scope.SubjectKey, batch.Header.Scope.PersonKey, batch.Header.Scope.OrgKey); err != nil {
+			&batch.ProductKey, &batch.Header.Scope.SubjectKey, batch.Header.Scope.PersonKey, batch.Header.Scope.OrgKey,
+			expiresAt(registeredAt, s.retention.Registry)); err != nil {
 			return fmt.Errorf("append v2 record registry: %w", err)
 		}
 	}
