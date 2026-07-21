@@ -60,42 +60,49 @@ type FundraisingWriter interface {
 }
 
 type Server struct {
-	writer              EventWriter
-	tokens              *auth.InstallationTokens
-	v2Writer            V2Writer
-	productTokens       *auth.ProductTokens
-	identityTokens      *auth.IdentityJWTVerifier
-	legacyProductTokens bool
-	fundraisingWriter   FundraisingWriter
-	donationVerifier    *auth.ServiceVerifier
-	logger              *slog.Logger
-	now                 func() time.Time
+	writer               EventWriter
+	tokens               *auth.InstallationTokens
+	v2Writer             V2Writer
+	productTokens        *auth.ProductTokens
+	identityTokens       *auth.IdentityJWTVerifier
+	legacyProductTokens  bool
+	fundraisingWriter    FundraisingWriter
+	donationVerifier     *auth.ServiceVerifier
+	ttsOutcomeVerifier   *auth.ServiceVerifier
+	ttsOutcomeSubjectKey string
+	logger               *slog.Logger
+	now                  func() time.Time
 }
 
 func NewServer(writer EventWriter, tokens *auth.InstallationTokens, logger *slog.Logger) http.Handler {
-	return newServer(writer, tokens, nil, nil, nil, false, nil, nil, logger)
+	return newServer(writer, tokens, nil, nil, nil, false, nil, nil, nil, "", logger)
 }
 
 func NewServerWithV2(writer EventWriter, v2Writer V2Writer, tokens *auth.InstallationTokens, productTokens *auth.ProductTokens, logger *slog.Logger) http.Handler {
-	return newServer(writer, tokens, v2Writer, productTokens, nil, true, nil, nil, logger)
+	return newServer(writer, tokens, v2Writer, productTokens, nil, true, nil, nil, nil, "", logger)
 }
 
 func NewServerWithIdentityV2(writer EventWriter, v2Writer V2Writer, tokens *auth.InstallationTokens, identityTokens *auth.IdentityJWTVerifier,
 	legacyTokens *auth.ProductTokens, legacyEnabled bool, logger *slog.Logger) http.Handler {
-	return newServer(writer, tokens, v2Writer, legacyTokens, identityTokens, legacyEnabled, nil, nil, logger)
+	return newServer(writer, tokens, v2Writer, legacyTokens, identityTokens, legacyEnabled, nil, nil, nil, "", logger)
 }
 
 func NewServerWithIdentityV2AndFundraising(writer EventWriter, v2Writer V2Writer, fundraisingWriter FundraisingWriter, tokens *auth.InstallationTokens,
 	identityTokens *auth.IdentityJWTVerifier, legacyTokens *auth.ProductTokens, legacyEnabled bool, donationVerifier *auth.ServiceVerifier, logger *slog.Logger) http.Handler {
-	return newServer(writer, tokens, v2Writer, legacyTokens, identityTokens, legacyEnabled, fundraisingWriter, donationVerifier, logger)
+	return newServer(writer, tokens, v2Writer, legacyTokens, identityTokens, legacyEnabled, fundraisingWriter, donationVerifier, nil, "", logger)
+}
+
+func NewServerWithIdentityV2AndFundraisingAndTTSOutcome(writer EventWriter, v2Writer V2Writer, fundraisingWriter FundraisingWriter, tokens *auth.InstallationTokens,
+	identityTokens *auth.IdentityJWTVerifier, legacyTokens *auth.ProductTokens, legacyEnabled bool, donationVerifier, ttsOutcomeVerifier *auth.ServiceVerifier, ttsOutcomeSubjectKey string, logger *slog.Logger) http.Handler {
+	return newServer(writer, tokens, v2Writer, legacyTokens, identityTokens, legacyEnabled, fundraisingWriter, donationVerifier, ttsOutcomeVerifier, ttsOutcomeSubjectKey, logger)
 }
 
 func newServer(writer EventWriter, tokens *auth.InstallationTokens, v2Writer V2Writer, productTokens *auth.ProductTokens,
-	identityTokens *auth.IdentityJWTVerifier, legacyEnabled bool, fundraisingWriter FundraisingWriter, donationVerifier *auth.ServiceVerifier, logger *slog.Logger) http.Handler {
+	identityTokens *auth.IdentityJWTVerifier, legacyEnabled bool, fundraisingWriter FundraisingWriter, donationVerifier, ttsOutcomeVerifier *auth.ServiceVerifier, ttsOutcomeSubjectKey string, logger *slog.Logger) http.Handler {
 	server := &Server{
 		writer: writer, tokens: tokens, v2Writer: v2Writer, productTokens: productTokens, identityTokens: identityTokens,
 		legacyProductTokens: legacyEnabled, logger: logger, now: time.Now,
-		fundraisingWriter: fundraisingWriter, donationVerifier: donationVerifier,
+		fundraisingWriter: fundraisingWriter, donationVerifier: donationVerifier, ttsOutcomeVerifier: ttsOutcomeVerifier, ttsOutcomeSubjectKey: ttsOutcomeSubjectKey,
 	}
 	router := chi.NewRouter()
 	router.Use(httpx.SecurityHeaders)
@@ -111,6 +118,9 @@ func newServer(writer EventWriter, tokens *auth.InstallationTokens, v2Writer V2W
 	if fundraisingWriter != nil && donationVerifier != nil {
 		router.Post("/internal/fundraising/batches", server.fundraisingBatches)
 	}
+	if v2Writer != nil && ttsOutcomeVerifier != nil && ttsOutcomeSubjectKey != "" {
+		router.Post("/internal/tts/outcomes", server.ttsOutcomes)
+	}
 	if v2Writer != nil && (identityTokens != nil || (legacyEnabled && productTokens != nil)) {
 		if legacyEnabled && productTokens != nil {
 			router.Post("/v2/tokens", server.productToken)
@@ -119,6 +129,55 @@ func newServer(writer EventWriter, tokens *auth.InstallationTokens, v2Writer V2W
 		router.Post("/v2/privacy/requests", server.privacyRequestV2)
 	}
 	return router
+}
+
+// ttsOutcomes accepts only tts-echo's service HMAC and intentionally bypasses
+// client Identity. Its fixed scope prevents it from ingesting other telemetry.
+func (s *Server) ttsOutcomes(response http.ResponseWriter, request *http.Request) {
+	if !httpx.IsJSON(request) {
+		httpx.WriteError(response, http.StatusUnsupportedMediaType, "content_type_must_be_application_json")
+		return
+	}
+	body, err := httpx.ReadBody(response, request, v2.MaxBatchBytes)
+	if err != nil {
+		writeBodyError(response, err)
+		return
+	}
+	serviceHeaders := auth.ServiceHeadersFromRequest(request)
+	if err := s.ttsOutcomeVerifier.Verify(request.Method, request.URL.EscapedPath(), body, serviceHeaders); err != nil {
+		httpx.WriteError(response, http.StatusUnauthorized, "invalid_tts_outcome_signature")
+		return
+	}
+	batch, err := v2.ParseBatch(body, s.now())
+	if err != nil {
+		httpx.WriteError(response, http.StatusBadRequest, "invalid_batch")
+		return
+	}
+	if err := v2.ValidateIdempotencyKey(request.Header.Get("Idempotency-Key"), batch.Header.BatchID); err != nil || serviceHeaders.RequestID != batch.Header.BatchID {
+		httpx.WriteError(response, http.StatusBadRequest, "invalid_idempotency_key")
+		return
+	}
+	if batch.Header.Scope.Product != product.LinkaTTS || batch.Header.Scope.SubjectKey != s.ttsOutcomeSubjectKey ||
+		batch.Header.Scope.PersonKey != nil || batch.Header.Scope.OrgKey != nil || batch.Header.Stream != product.StreamOutcome {
+		httpx.WriteError(response, http.StatusForbidden, "tts_outcome_scope_mismatch")
+		return
+	}
+	result, err := s.v2Writer.WriteV2(request.Context(), batch.Header.BatchID, body)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrWriterConflict):
+			httpx.WriteError(response, http.StatusConflict, "idempotency_conflict")
+		case errors.Is(err, ErrWriterSuppressed):
+			httpx.WriteError(response, http.StatusForbidden, "telemetry_suppressed")
+		default:
+			s.logger.Error("writer rejected tts outcome batch", "error", err)
+			httpx.WriteError(response, http.StatusBadGateway, "writer_unavailable")
+		}
+		return
+	}
+	httpx.WriteJSON(response, http.StatusAccepted, map[string]any{
+		"batch_id": batch.Header.BatchID, "accepted_records": result.Count, "replayed": result.Replayed,
+	})
 }
 
 // fundraisingBatches accepts only the donation service HMAC. It intentionally

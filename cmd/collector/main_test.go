@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	"github.com/linkasu/linka.plays-metric/internal/product"
@@ -37,5 +38,18 @@ func TestCORSOriginsRequiresExactHTTPSOriginsInProduction(t *testing.T) {
 	t.Setenv("CORS_ALLOWED_ORIGINS", "http://linka.su")
 	if _, err := corsOrigins("production"); err == nil {
 		t.Fatal("insecure production origin was accepted")
+	}
+}
+
+func TestTTSOutcomeIngressIsDisabledWithoutActiveSecret(t *testing.T) {
+	t.Setenv("TTS_OUTCOME_HMAC_ACTIVE_KEY_ID", "tts-echo")
+	t.Setenv("TTS_OUTCOME_HMAC_ACTIVE_SECRET", "")
+	t.Setenv("TTS_OUTCOME_HMAC_PREVIOUS_KEY_ID", "")
+	t.Setenv("TTS_OUTCOME_HMAC_PREVIOUS_SECRET", "")
+	t.Setenv("TTS_OUTCOME_SUBJECT_KEY", strings.Repeat("a", 64))
+
+	verifier, subjectKey, err := configureTTSOutcomeIngress()
+	if err != nil || verifier != nil || subjectKey != "" {
+		t.Fatalf("verifier=%v subjectKey=%q err=%v", verifier, subjectKey, err)
 	}
 }
