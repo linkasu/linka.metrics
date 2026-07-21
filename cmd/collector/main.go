@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -65,6 +66,21 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	serviceKey, _, err := app.HMACKeyring("SERVICE_HMAC", writerSecret)
+	if err != nil {
+		return err
+	}
+	var donationVerifier *auth.ServiceVerifier
+	if donationSecret := os.Getenv("DONATION_INGEST_HMAC_ACTIVE_SECRET"); donationSecret != "" {
+		donationKey, previousDonationKey, err := app.HMACKeyring("DONATION_INGEST_HMAC", []byte(donationSecret))
+		if err != nil {
+			return err
+		}
+		donationVerifier, err = auth.NewServiceVerifier(donationKey, previousDonationKey, "nko-donations", 5*time.Minute)
+		if err != nil {
+			return err
+		}
+	}
+	ttsOutcomeVerifier, ttsOutcomeSubjectKey, err := configureTTSOutcomeIngress()
 	if err != nil {
 		return err
 	}
@@ -142,12 +158,34 @@ func run(logger *slog.Logger) error {
 	if address == "" {
 		address = ":8080"
 	}
-	handler := collector.NewServerWithIdentityV2(writerClient, writerClient, tokens, identityVerifier, productTokens, legacyEnabled, logger)
+	handler := collector.NewServerWithIdentityV2AndFundraisingAndTTSOutcome(writerClient, writerClient, writerClient, tokens, identityVerifier, productTokens, legacyEnabled, donationVerifier, ttsOutcomeVerifier, ttsOutcomeSubjectKey, logger)
 	origins, err := corsOrigins(deploymentEnvironment)
 	if err != nil {
 		return err
 	}
 	return app.Serve(address, httpx.CORS(origins)(handler), logger)
+}
+
+var opaqueSubjectKeyPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
+func configureTTSOutcomeIngress() (*auth.ServiceVerifier, string, error) {
+	secret := os.Getenv("TTS_OUTCOME_HMAC_ACTIVE_SECRET")
+	if secret == "" {
+		return nil, "", nil
+	}
+	subjectKey := os.Getenv("TTS_OUTCOME_SUBJECT_KEY")
+	if !opaqueSubjectKeyPattern.MatchString(subjectKey) {
+		return nil, "", errors.New("TTS_OUTCOME_SUBJECT_KEY must be a lowercase 64-character hexadecimal key")
+	}
+	key, previousKey, err := app.HMACKeyring("TTS_OUTCOME_HMAC", []byte(secret))
+	if err != nil {
+		return nil, "", err
+	}
+	verifier, err := auth.NewServiceVerifier(key, previousKey, "tts-echo", 5*time.Minute)
+	if err != nil {
+		return nil, "", err
+	}
+	return verifier, subjectKey, nil
 }
 
 func identityAudiences() (map[product.ID]string, error) {

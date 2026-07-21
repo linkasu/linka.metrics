@@ -93,6 +93,22 @@ type ProductRecord struct {
 	App          AppMetadata `json:"app"`
 }
 
+// OutcomeRecord intentionally uses only closed enums and coarse buckets. It
+// captures a completed product action without accepting communication content.
+type OutcomeRecord struct {
+	RecordID       string      `json:"record_id"`
+	OccurredAt     string      `json:"occurred_at"`
+	Kind           string      `json:"kind"`
+	AppSessionID   string      `json:"app_session_id"`
+	App            AppMetadata `json:"app"`
+	Result         *string     `json:"result,omitempty"`
+	Source         *string     `json:"source,omitempty"`
+	Mode           *string     `json:"mode,omitempty"`
+	CountBucket    *string     `json:"count_bucket,omitempty"`
+	DurationBucket *string     `json:"duration_bucket,omitempty"`
+	FailureCode    *string     `json:"failure_code,omitempty"`
+}
+
 type CommonBatch struct {
 	BatchHeader
 	Records []CommonRecord `json:"records"`
@@ -111,6 +127,11 @@ type PlaysBatch struct {
 type ProductBatch struct {
 	BatchHeader
 	Records []ProductRecord `json:"records"`
+}
+
+type OutcomeBatch struct {
+	BatchHeader
+	Records []OutcomeRecord `json:"records"`
 }
 
 type ValidatedCommonRecord struct {
@@ -133,6 +154,11 @@ type ValidatedProductRecord struct {
 	OccurredAtTime time.Time
 }
 
+type ValidatedOutcomeRecord struct {
+	OutcomeRecord
+	OccurredAtTime time.Time
+}
+
 type ValidatedBatch struct {
 	Header           BatchHeader
 	SentAtTime       time.Time
@@ -141,10 +167,11 @@ type ValidatedBatch struct {
 	TechnicalRecords []ValidatedTechnicalRecord
 	PlaysRecords     []ValidatedPlaysRecord
 	ProductRecords   []ValidatedProductRecord
+	OutcomeRecords   []ValidatedOutcomeRecord
 }
 
 func (b ValidatedBatch) RecordCount() int {
-	return len(b.CommonRecords) + len(b.TechnicalRecords) + len(b.PlaysRecords) + len(b.ProductRecords)
+	return len(b.CommonRecords) + len(b.TechnicalRecords) + len(b.PlaysRecords) + len(b.ProductRecords) + len(b.OutcomeRecords)
 }
 
 type IngestResult struct {

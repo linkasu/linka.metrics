@@ -98,16 +98,20 @@ func TestMultiProductMigrationsAreEmbedded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest := migrations[len(migrations)-1]; latest.Version != 12 || latest.Name != "012_v2_datalens_multi_product_views.sql" {
+	if latest := migrations[len(migrations)-1]; latest.Version != 14 || latest.Name != "014_fundraising_events.sql" {
 		t.Fatalf("latest migration = %03d %s", latest.Version, latest.Name)
 	}
-	var productSQL, datalensSQL string
+	var productSQL, datalensSQL, outcomeSQL, fundraisingSQL string
 	for _, migration := range migrations {
 		switch migration.Version {
 		case 11:
 			productSQL = strings.Join(migration.Statements, "\n")
 		case 12:
 			datalensSQL = strings.Join(migration.Statements, "\n")
+		case 13:
+			outcomeSQL = strings.Join(migration.Statements, "\n")
+		case 14:
+			fundraisingSQL = strings.Join(migration.Statements, "\n")
 		}
 	}
 	if !strings.Contains(productSQL, "product_events_v2") || !strings.Contains(productSQL, "datalens_product_v2") {
@@ -115,5 +119,11 @@ func TestMultiProductMigrationsAreEmbedded(t *testing.T) {
 	}
 	if !strings.Contains(datalensSQL, "datalens_common_v3") || !strings.Contains(datalensSQL, "datalens_game_sessions_v3") {
 		t.Fatal("multi-product DataLens migration is incomplete")
+	}
+	if !strings.Contains(outcomeSQL, "product_outcomes_v2") || !strings.Contains(outcomeSQL, "datalens_outcomes_v1") || !strings.Contains(outcomeSQL, "datalens_telemetry_quality_daily_v1") {
+		t.Fatal("outcome stream migration is incomplete")
+	}
+	if !strings.Contains(fundraisingSQL, "fundraising_events_v1") || !strings.Contains(fundraisingSQL, "fundraising_finance_daily_v1") {
+		t.Fatal("fundraising migration is incomplete")
 	}
 }

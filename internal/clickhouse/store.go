@@ -28,16 +28,18 @@ type Retention struct {
 	Technical     time.Duration
 	Plays         time.Duration
 	Product       time.Duration
+	Outcome       time.Duration
 	Privacy       time.Duration
 }
 
 type Store struct {
-	connection ch.Conn
-	retention  Retention
-	now        func() time.Time
-	v2Mu       sync.Mutex
-	privacyMu  sync.Mutex
-	v1Mu       sync.Mutex
+	connection    ch.Conn
+	retention     Retention
+	now           func() time.Time
+	v2Mu          sync.Mutex
+	privacyMu     sync.Mutex
+	v1Mu          sync.Mutex
+	fundraisingMu sync.Mutex
 }
 
 func Open(config Config) (*Store, error) {

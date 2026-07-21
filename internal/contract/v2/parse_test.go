@@ -17,8 +17,29 @@ func TestParseBatchAcceptsOneTypedStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if batch.RecordCount() != 1 || len(batch.CommonRecords) != 1 || len(batch.TechnicalRecords) != 0 || len(batch.PlaysRecords) != 0 || len(batch.ProductRecords) != 0 {
+	if batch.RecordCount() != 1 || len(batch.CommonRecords) != 1 || len(batch.TechnicalRecords) != 0 || len(batch.PlaysRecords) != 0 || len(batch.ProductRecords) != 0 || len(batch.OutcomeRecords) != 0 {
 		t.Fatalf("unexpected typed batch: %+v", batch)
+	}
+}
+
+func TestParseBatchAcceptsRegisteredOutcomeAndRejectsUnsafeValues(t *testing.T) {
+	body := validOutcomeBatch("linka-type", "speech_completed", "web")
+	batch, err := ParseBatch([]byte(body), testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch.RecordCount() != 1 || len(batch.OutcomeRecords) != 1 {
+		t.Fatalf("unexpected outcome batch: %+v", batch)
+	}
+	for _, unsafe := range []string{
+		strings.Replace(body, `"source":"input"`, `"source":"private phrase"`, 1),
+		strings.Replace(body, `"kind":"speech_completed"`, `"kind":"unknown"`, 1),
+		strings.Replace(body, `"result":"completed"`, `"result":"completed","text":"private"`, 1),
+		strings.Replace(body, `"mode":"cloud"`, `"mode":"remote-url"`, 1),
+	} {
+		if _, err := ParseBatch([]byte(unsafe), testNow); err == nil {
+			t.Fatal("unsafe outcome batch was accepted")
+		}
 	}
 }
 
@@ -260,4 +281,26 @@ func validPlaysBatch(inputMethod string) string {
     "input_method":%q
   }]
 }`, testOpaqueKey, inputMethod)
+}
+
+func validOutcomeBatch(productID, kind, platform string) string {
+	return fmt.Sprintf(`{
+  "schema_version":2,
+  "batch_id":"10000000-0000-4000-8000-000000000001",
+  "scope":{"product":%q,"subject_key":%q},
+  "stream":"outcome",
+  "sent_at":"2026-07-18T12:00:00.000Z",
+  "records":[{
+    "record_id":"20000000-0000-4000-8000-000000000002",
+    "occurred_at":"2026-07-18T11:59:00.000Z",
+    "kind":%q,
+    "app_session_id":"30000000-0000-4000-8000-000000000003",
+    "app":{"version":"1.2.3","build":"42","platform":%q,"os_version":"1","locale":"ru-RU"},
+    "result":"completed",
+    "source":"input",
+    "mode":"cloud",
+    "count_bucket":"one",
+    "duration_bucket":"under_5s"
+  }]
+}`, productID, testOpaqueKey, kind, platform)
 }

@@ -102,6 +102,22 @@ func ParseBatch(data []byte, now time.Time) (ValidatedBatch, error) {
 			}
 			validated.ProductRecords = append(validated.ProductRecords, parsed)
 		}
+	case product.StreamOutcome:
+		var batch OutcomeBatch
+		if err := jsonstrict.DecodeObject(data, &batch, MaxJSONDepth); err != nil {
+			return ValidatedBatch{}, fmt.Errorf("decode outcome batch: %w", err)
+		}
+		if err := validateRecordCount(len(batch.Records)); err != nil {
+			return ValidatedBatch{}, err
+		}
+		validated.OutcomeRecords = make([]ValidatedOutcomeRecord, 0, len(batch.Records))
+		for index, record := range batch.Records {
+			parsed, err := validateOutcomeRecord(record, validated.SentAtTime, spec)
+			if err != nil {
+				return ValidatedBatch{}, fmt.Errorf("records[%d]: %w", index, err)
+			}
+			validated.OutcomeRecords = append(validated.OutcomeRecords, parsed)
+		}
 	default:
 		return ValidatedBatch{}, errors.New("unknown stream")
 	}
@@ -132,6 +148,12 @@ func validateUniqueRecordIDs(batch ValidatedBatch) error {
 		seen[record.RecordID] = struct{}{}
 	}
 	for _, record := range batch.ProductRecords {
+		if _, exists := seen[record.RecordID]; exists {
+			return errors.New("duplicate record_id in batch")
+		}
+		seen[record.RecordID] = struct{}{}
+	}
+	for _, record := range batch.OutcomeRecords {
 		if _, exists := seen[record.RecordID]; exists {
 			return errors.New("duplicate record_id in batch")
 		}
@@ -328,6 +350,46 @@ func validateProductRecord(record ProductRecord, sentAt time.Time, spec product.
 		return ValidatedProductRecord{}, errors.New("product kind is not registered for product")
 	}
 	return ValidatedProductRecord{ProductRecord: record, OccurredAtTime: occurredAt}, nil
+}
+
+func validateOutcomeRecord(record OutcomeRecord, sentAt time.Time, spec product.Spec) (ValidatedOutcomeRecord, error) {
+	occurredAt, err := validateBaseRecord(record.RecordID, record.OccurredAt, record.AppSessionID, record.App, sentAt)
+	if err != nil {
+		return ValidatedOutcomeRecord{}, err
+	}
+	rule, ok := spec.OutcomeRule(record.Kind)
+	if !ok {
+		return ValidatedOutcomeRecord{}, errors.New("outcome kind is not registered for product")
+	}
+	if err := validateOptionalEnum("result", record.Result, rule.Results); err != nil {
+		return ValidatedOutcomeRecord{}, err
+	}
+	if err := validateOptionalEnum("source", record.Source, rule.Sources); err != nil {
+		return ValidatedOutcomeRecord{}, err
+	}
+	if err := validateOptionalEnum("mode", record.Mode, rule.Modes); err != nil {
+		return ValidatedOutcomeRecord{}, err
+	}
+	if err := validateOptionalEnum("count_bucket", record.CountBucket, rule.CountBuckets); err != nil {
+		return ValidatedOutcomeRecord{}, err
+	}
+	if err := validateOptionalEnum("duration_bucket", record.DurationBucket, rule.DurationBuckets); err != nil {
+		return ValidatedOutcomeRecord{}, err
+	}
+	if err := validateOptionalEnum("failure_code", record.FailureCode, rule.FailureCodes); err != nil {
+		return ValidatedOutcomeRecord{}, err
+	}
+	return ValidatedOutcomeRecord{OutcomeRecord: record, OccurredAtTime: occurredAt}, nil
+}
+
+func validateOptionalEnum(name string, value *string, allowed []string) error {
+	if value == nil {
+		return nil
+	}
+	if len(allowed) == 0 || !oneOf(*value, allowed...) {
+		return fmt.Errorf("%s contains an unregistered value", name)
+	}
+	return nil
 }
 
 func validateBaseRecord(recordID, occurredAt, appSessionID string, app AppMetadata, sentAt time.Time) (time.Time, error) {

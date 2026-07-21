@@ -16,14 +16,15 @@ import (
 )
 
 type HTTPWriter struct {
-	v1Endpoint        string
-	v2BatchEndpoint   string
-	v2PrivacyEndpoint string
-	v1PrivacyEndpoint string
-	secret            []byte
-	serviceSigner     *auth.ServiceSigner
-	client            *http.Client
-	now               func() time.Time
+	v1Endpoint          string
+	v2BatchEndpoint     string
+	v2PrivacyEndpoint   string
+	v1PrivacyEndpoint   string
+	fundraisingEndpoint string
+	secret              []byte
+	serviceSigner       *auth.ServiceSigner
+	client              *http.Client
+	now                 func() time.Time
 }
 
 var (
@@ -55,9 +56,21 @@ func NewHTTPWriterWithServiceKey(baseURL string, v1Secret []byte, serviceKey aut
 	return &HTTPWriter{
 		v1Endpoint: endpoint("/internal/v1/events"), v2BatchEndpoint: endpoint("/internal/v2/batches"),
 		v2PrivacyEndpoint: endpoint("/internal/v2/privacy/requests"), v1PrivacyEndpoint: endpoint("/internal/v1/privacy/requests"),
-		secret:        append([]byte(nil), v1Secret...),
-		serviceSigner: signer, client: &http.Client{Timeout: timeout}, now: time.Now,
+		fundraisingEndpoint: endpoint("/internal/fundraising/batches"),
+		secret:              append([]byte(nil), v1Secret...),
+		serviceSigner:       signer, client: &http.Client{Timeout: timeout}, now: time.Now,
 	}, nil
+}
+
+func (w *HTTPWriter) WriteFundraising(ctx context.Context, batchID string, body []byte) (fundraisingWriteResult, error) {
+	var response struct {
+		AcceptedRecords int  `json:"accepted_records"`
+		Replayed        bool `json:"replayed"`
+	}
+	if err := w.callV2(ctx, w.fundraisingEndpoint, batchID, body, &response); err != nil {
+		return fundraisingWriteResult{}, err
+	}
+	return fundraisingWriteResult{Count: response.AcceptedRecords, Replayed: response.Replayed}, nil
 }
 
 func (w *HTTPWriter) WriteLegacyPrivacy(ctx context.Context, requestID string, body []byte) (privacyWriteResult, error) {

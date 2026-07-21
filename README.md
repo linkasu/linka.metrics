@@ -72,6 +72,7 @@ Environment-файл задаёт `DISK_PATH`, `DISK_THRESHOLD_PERCENT=80`, `DIS
 
 - [API v1](docs/api.md)
 - [Telemetry V2](docs/telemetry-v2.md)
+- [TTS outcome ingestion](docs/tts-outcome-ingestion.md)
 - [Staging и upgrade](docs/staging.md)
 - [Импорт legacy telemetry](docs/legacy-import.md)
 - [Политика приватности](docs/privacy.md)
