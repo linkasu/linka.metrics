@@ -68,6 +68,17 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	var donationVerifier *auth.ServiceVerifier
+	if donationSecret := os.Getenv("DONATION_INGEST_HMAC_ACTIVE_SECRET"); donationSecret != "" {
+		donationKey, previousDonationKey, err := app.HMACKeyring("DONATION_INGEST_HMAC", []byte(donationSecret))
+		if err != nil {
+			return err
+		}
+		donationVerifier, err = auth.NewServiceVerifier(donationKey, previousDonationKey, "nko-donations", 5*time.Minute)
+		if err != nil {
+			return err
+		}
+	}
 	deploymentEnvironment := os.Getenv("DEPLOYMENT_ENVIRONMENT")
 	if deploymentEnvironment == "" {
 		deploymentEnvironment = "production"
@@ -142,7 +153,7 @@ func run(logger *slog.Logger) error {
 	if address == "" {
 		address = ":8080"
 	}
-	handler := collector.NewServerWithIdentityV2(writerClient, writerClient, tokens, identityVerifier, productTokens, legacyEnabled, logger)
+	handler := collector.NewServerWithIdentityV2AndFundraising(writerClient, writerClient, writerClient, tokens, identityVerifier, productTokens, legacyEnabled, donationVerifier, logger)
 	origins, err := corsOrigins(deploymentEnvironment)
 	if err != nil {
 		return err

@@ -76,7 +76,7 @@ func run(logger *slog.Logger) error {
 	if address == "" {
 		address = ":8081"
 	}
-	return app.Serve(address, writer.NewServerWithV2(store, store, writerSecret, serviceVerifier, logger, 5*time.Minute), logger)
+	return app.Serve(address, writer.NewServerWithV2AndFundraising(store, store, store, writerSecret, serviceVerifier, logger, 5*time.Minute), logger)
 }
 
 func loadRetention() (metricclickhouse.Retention, error) {
@@ -90,6 +90,7 @@ func loadRetention() (metricclickhouse.Retention, error) {
 		{"RETENTION_V2_TECHNICAL", &result.Technical},
 		{"RETENTION_V2_PLAYS", &result.Plays},
 		{"RETENTION_V2_PRODUCT", &result.Product},
+		{"RETENTION_V2_OUTCOME", &result.Outcome},
 		{"RETENTION_V2_PRIVACY", &result.Privacy},
 	}
 	for _, value := range values {

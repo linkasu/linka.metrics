@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/linkasu/linka.plays-metric/internal/auth"
+	"github.com/linkasu/linka.plays-metric/internal/contract/fundraising"
 	v1 "github.com/linkasu/linka.plays-metric/internal/contract/v1"
 	v2 "github.com/linkasu/linka.plays-metric/internal/contract/v2"
 	"github.com/linkasu/linka.plays-metric/internal/httpx"
@@ -25,33 +26,43 @@ type StoreV2 interface {
 	CreateLegacyPrivacyRequest(context.Context, v1.ValidatedPrivacyRequest, string) (v2.PrivacyResult, error)
 }
 
+type FundraisingStore interface {
+	InsertFundraising(context.Context, fundraising.ValidatedBatch, string) (fundraising.IngestResult, error)
+}
+
 type Server struct {
-	store           Store
-	storeV2         StoreV2
-	secret          []byte
-	serviceVerifier *auth.ServiceVerifier
-	logger          *slog.Logger
-	maxSkew         time.Duration
-	now             func() time.Time
+	store            Store
+	storeV2          StoreV2
+	fundraisingStore FundraisingStore
+	secret           []byte
+	serviceVerifier  *auth.ServiceVerifier
+	logger           *slog.Logger
+	maxSkew          time.Duration
+	now              func() time.Time
 }
 
 func NewServer(store Store, secret []byte, logger *slog.Logger, maxSkew time.Duration) http.Handler {
-	return newServer(store, nil, secret, nil, logger, maxSkew)
+	return newServer(store, nil, nil, secret, nil, logger, maxSkew)
 }
 
 func NewServerWithV2(store Store, storeV2 StoreV2, secret []byte, serviceVerifier *auth.ServiceVerifier, logger *slog.Logger, maxSkew time.Duration) http.Handler {
-	return newServer(store, storeV2, secret, serviceVerifier, logger, maxSkew)
+	return newServer(store, storeV2, nil, secret, serviceVerifier, logger, maxSkew)
 }
 
-func newServer(store Store, storeV2 StoreV2, secret []byte, serviceVerifier *auth.ServiceVerifier, logger *slog.Logger, maxSkew time.Duration) http.Handler {
+func NewServerWithV2AndFundraising(store Store, storeV2 StoreV2, fundraisingStore FundraisingStore, secret []byte, serviceVerifier *auth.ServiceVerifier, logger *slog.Logger, maxSkew time.Duration) http.Handler {
+	return newServer(store, storeV2, fundraisingStore, secret, serviceVerifier, logger, maxSkew)
+}
+
+func newServer(store Store, storeV2 StoreV2, fundraisingStore FundraisingStore, secret []byte, serviceVerifier *auth.ServiceVerifier, logger *slog.Logger, maxSkew time.Duration) http.Handler {
 	server := &Server{
-		store:           store,
-		storeV2:         storeV2,
-		secret:          append([]byte(nil), secret...),
-		serviceVerifier: serviceVerifier,
-		logger:          logger,
-		maxSkew:         maxSkew,
-		now:             time.Now,
+		store:            store,
+		storeV2:          storeV2,
+		fundraisingStore: fundraisingStore,
+		secret:           append([]byte(nil), secret...),
+		serviceVerifier:  serviceVerifier,
+		logger:           logger,
+		maxSkew:          maxSkew,
+		now:              time.Now,
 	}
 	router := chi.NewRouter()
 	router.Use(httpx.SecurityHeaders)
@@ -63,7 +74,50 @@ func newServer(store Store, storeV2 StoreV2, secret []byte, serviceVerifier *aut
 		router.Post("/internal/v2/privacy/requests", server.privacyRequestV2)
 		router.Post("/internal/v1/privacy/requests", server.privacyRequestV1)
 	}
+	if fundraisingStore != nil && serviceVerifier != nil {
+		router.Post("/internal/fundraising/batches", server.fundraisingBatches)
+	}
 	return router
+}
+
+func (s *Server) fundraisingBatches(response http.ResponseWriter, request *http.Request) {
+	if !httpx.IsJSON(request) {
+		httpx.WriteError(response, http.StatusUnsupportedMediaType, "content_type_must_be_application_json")
+		return
+	}
+	body, err := httpx.ReadBody(response, request, fundraising.MaxBatchBytes)
+	if err != nil {
+		writeV2BodyError(response, err)
+		return
+	}
+	serviceHeaders := auth.ServiceHeadersFromRequest(request)
+	if err := s.serviceVerifier.Verify(request.Method, request.URL.EscapedPath(), body, serviceHeaders); err != nil {
+		httpx.WriteError(response, http.StatusUnauthorized, "invalid_service_signature")
+		return
+	}
+	batch, err := fundraising.ParseBatch(body, s.now())
+	if err != nil {
+		httpx.WriteError(response, http.StatusBadRequest, "invalid_fundraising_batch")
+		return
+	}
+	idempotencyKey := request.Header.Get("Idempotency-Key")
+	if err := fundraising.ValidateIdempotencyKey(idempotencyKey, batch.BatchID); err != nil || serviceHeaders.RequestID != idempotencyKey {
+		httpx.WriteError(response, http.StatusBadRequest, "invalid_idempotency_key")
+		return
+	}
+	result, err := s.fundraisingStore.InsertFundraising(request.Context(), batch, fundraising.BodySHA256(body))
+	if err != nil {
+		if errors.Is(err, fundraising.ErrIdempotencyConflict) {
+			httpx.WriteError(response, http.StatusConflict, "idempotency_conflict")
+			return
+		}
+		s.logger.Error("insert fundraising batch", "error", err)
+		httpx.WriteError(response, http.StatusServiceUnavailable, "store_unavailable")
+		return
+	}
+	httpx.WriteJSON(response, http.StatusAccepted, map[string]any{
+		"batch_id": batch.BatchID, "accepted_records": result.Count, "replayed": result.Replayed,
+	})
 }
 
 func (s *Server) health(response http.ResponseWriter, request *http.Request) {

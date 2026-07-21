@@ -175,7 +175,7 @@ func (s *Store) RetryPrivacyRequest(ctx context.Context, request privacy.Request
 func (s *Store) DeleteTelemetryRequest(ctx context.Context, request privacy.Request) error {
 	s.privacyMu.Lock()
 	defer s.privacyMu.Unlock()
-	tables := []string{"common_events_v2", "technical_events_v2", "plays_events_v2", "product_events_v2", "record_registry_v2", "ingest_batches_v2"}
+	tables := []string{"common_events_v2", "technical_events_v2", "plays_events_v2", "product_events_v2", "product_outcomes_v2", "record_registry_v2", "ingest_batches_v2"}
 	if request.LegacyInstallationID != nil {
 		s.v1Mu.Lock()
 		defer s.v1Mu.Unlock()

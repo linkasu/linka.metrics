@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/linkasu/linka.plays-metric/internal/auth"
+	"github.com/linkasu/linka.plays-metric/internal/contract/fundraising"
 	v1 "github.com/linkasu/linka.plays-metric/internal/contract/v1"
 	v2 "github.com/linkasu/linka.plays-metric/internal/contract/v2"
 )
@@ -26,6 +27,17 @@ type fakeStoreV2 struct {
 	result v2.IngestResult
 	err    error
 	calls  int
+}
+
+type fakeFundraisingStore struct {
+	result fundraising.IngestResult
+	err    error
+	calls  int
+}
+
+func (s *fakeFundraisingStore) InsertFundraising(context.Context, fundraising.ValidatedBatch, string) (fundraising.IngestResult, error) {
+	s.calls++
+	return s.result, s.err
 }
 
 func (s *fakeStoreV2) InsertV2(context.Context, v2.ValidatedBatch, string) (v2.IngestResult, error) {
@@ -132,6 +144,50 @@ func TestWriterV2ReturnsConflictForChangedBodyHash(t *testing.T) {
 	}
 }
 
+func TestWriterFundraisingRequiresCollectorSignatureAndPersists(t *testing.T) {
+	store := &fakeFundraisingStore{result: fundraising.IngestResult{Count: 1}}
+	key := auth.ServiceKey{ID: "current", Secret: []byte(strings.Repeat("k", 32))}
+	signer, _ := auth.NewServiceSigner(key, "collector")
+	verifier, _ := auth.NewServiceVerifier(key, nil, "collector", 5*time.Minute)
+	body := writerFundraisingBatch(time.Now().UTC())
+	batchID := "10000000-0000-4000-8000-000000000001"
+	headers, err := signer.Sign(http.MethodPost, "/internal/fundraising/batches", batchID, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/internal/fundraising/batches", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", batchID)
+	auth.ApplyServiceHeaders(request.Header, headers)
+	response := httptest.NewRecorder()
+
+	NewServerWithV2AndFundraising(&fakeStore{}, &fakeStoreV2{}, store, []byte(strings.Repeat("w", 32)), verifier, writerTestLogger(), 5*time.Minute).ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted || store.calls != 1 {
+		t.Fatalf("status=%d calls=%d body=%s", response.Code, store.calls, response.Body.String())
+	}
+}
+
+func TestWriterFundraisingRejectsNonCollectorSignature(t *testing.T) {
+	store := &fakeFundraisingStore{}
+	key := auth.ServiceKey{ID: "current", Secret: []byte(strings.Repeat("k", 32))}
+	signer, _ := auth.NewServiceSigner(key, "nko-donations")
+	verifier, _ := auth.NewServiceVerifier(key, nil, "collector", 5*time.Minute)
+	body := writerFundraisingBatch(time.Now().UTC())
+	headers, _ := signer.Sign(http.MethodPost, "/internal/fundraising/batches", "10000000-0000-4000-8000-000000000001", body)
+	request := httptest.NewRequest(http.MethodPost, "/internal/fundraising/batches", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", "10000000-0000-4000-8000-000000000001")
+	auth.ApplyServiceHeaders(request.Header, headers)
+	response := httptest.NewRecorder()
+
+	NewServerWithV2AndFundraising(&fakeStore{}, &fakeStoreV2{}, store, []byte(strings.Repeat("w", 32)), verifier, writerTestLogger(), 5*time.Minute).ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized || store.calls != 0 {
+		t.Fatalf("status=%d calls=%d", response.Code, store.calls)
+	}
+}
+
 func writerValidBatch() []byte {
 	return []byte(fmt.Sprintf(`{
   "schema_version":1,
@@ -160,6 +216,25 @@ func writerV2Batch(now time.Time) []byte {
     "kind":"app_started",
     "app_session_id":"30000000-0000-4000-8000-000000000003",
     "app":{"version":"1","build":"1","platform":"linux","os_version":"1","locale":"ru"}
+  }]
+}`, now.UTC().Truncate(time.Second).Format(time.RFC3339), now.UTC().Add(-time.Minute).Truncate(time.Second).Format(time.RFC3339)))
+}
+
+func writerFundraisingBatch(now time.Time) []byte {
+	return []byte(fmt.Sprintf(`{
+  "schema_version":1,
+  "batch_id":"10000000-0000-4000-8000-000000000001",
+  "sent_at":%q,
+  "records":[{
+    "event_id":"20000000-0000-4000-8000-000000000002",
+    "occurred_at":%q,
+    "kind":"recurring_charge_failed",
+    "amount":"500.00",
+    "currency":"RUB",
+    "frequency":"monthly",
+    "attribution_source":"unknown",
+    "attribution_campaign":null,
+    "failure_code":"declined"
   }]
 }`, now.UTC().Truncate(time.Second).Format(time.RFC3339), now.UTC().Add(-time.Minute).Truncate(time.Second).Format(time.RFC3339)))
 }

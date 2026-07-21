@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/linkasu/linka.plays-metric/internal/auth"
+	"github.com/linkasu/linka.plays-metric/internal/contract/fundraising"
 	v1 "github.com/linkasu/linka.plays-metric/internal/contract/v1"
 	v2 "github.com/linkasu/linka.plays-metric/internal/contract/v2"
 	"github.com/linkasu/linka.plays-metric/internal/httpx"
@@ -43,10 +44,19 @@ type privacyWriteResult struct {
 	Replayed bool
 }
 
+type fundraisingWriteResult struct {
+	Count    int
+	Replayed bool
+}
+
 type V2Writer interface {
 	WriteV2(context.Context, string, []byte) (v2WriteResult, error)
 	WritePrivacy(context.Context, string, []byte) (privacyWriteResult, error)
 	WriteLegacyPrivacy(context.Context, string, []byte) (privacyWriteResult, error)
+}
+
+type FundraisingWriter interface {
+	WriteFundraising(context.Context, string, []byte) (fundraisingWriteResult, error)
 }
 
 type Server struct {
@@ -56,28 +66,36 @@ type Server struct {
 	productTokens       *auth.ProductTokens
 	identityTokens      *auth.IdentityJWTVerifier
 	legacyProductTokens bool
+	fundraisingWriter   FundraisingWriter
+	donationVerifier    *auth.ServiceVerifier
 	logger              *slog.Logger
 	now                 func() time.Time
 }
 
 func NewServer(writer EventWriter, tokens *auth.InstallationTokens, logger *slog.Logger) http.Handler {
-	return newServer(writer, tokens, nil, nil, nil, false, logger)
+	return newServer(writer, tokens, nil, nil, nil, false, nil, nil, logger)
 }
 
 func NewServerWithV2(writer EventWriter, v2Writer V2Writer, tokens *auth.InstallationTokens, productTokens *auth.ProductTokens, logger *slog.Logger) http.Handler {
-	return newServer(writer, tokens, v2Writer, productTokens, nil, true, logger)
+	return newServer(writer, tokens, v2Writer, productTokens, nil, true, nil, nil, logger)
 }
 
 func NewServerWithIdentityV2(writer EventWriter, v2Writer V2Writer, tokens *auth.InstallationTokens, identityTokens *auth.IdentityJWTVerifier,
 	legacyTokens *auth.ProductTokens, legacyEnabled bool, logger *slog.Logger) http.Handler {
-	return newServer(writer, tokens, v2Writer, legacyTokens, identityTokens, legacyEnabled, logger)
+	return newServer(writer, tokens, v2Writer, legacyTokens, identityTokens, legacyEnabled, nil, nil, logger)
+}
+
+func NewServerWithIdentityV2AndFundraising(writer EventWriter, v2Writer V2Writer, fundraisingWriter FundraisingWriter, tokens *auth.InstallationTokens,
+	identityTokens *auth.IdentityJWTVerifier, legacyTokens *auth.ProductTokens, legacyEnabled bool, donationVerifier *auth.ServiceVerifier, logger *slog.Logger) http.Handler {
+	return newServer(writer, tokens, v2Writer, legacyTokens, identityTokens, legacyEnabled, fundraisingWriter, donationVerifier, logger)
 }
 
 func newServer(writer EventWriter, tokens *auth.InstallationTokens, v2Writer V2Writer, productTokens *auth.ProductTokens,
-	identityTokens *auth.IdentityJWTVerifier, legacyEnabled bool, logger *slog.Logger) http.Handler {
+	identityTokens *auth.IdentityJWTVerifier, legacyEnabled bool, fundraisingWriter FundraisingWriter, donationVerifier *auth.ServiceVerifier, logger *slog.Logger) http.Handler {
 	server := &Server{
 		writer: writer, tokens: tokens, v2Writer: v2Writer, productTokens: productTokens, identityTokens: identityTokens,
 		legacyProductTokens: legacyEnabled, logger: logger, now: time.Now,
+		fundraisingWriter: fundraisingWriter, donationVerifier: donationVerifier,
 	}
 	router := chi.NewRouter()
 	router.Use(httpx.SecurityHeaders)
@@ -90,6 +108,9 @@ func newServer(writer EventWriter, tokens *auth.InstallationTokens, v2Writer V2W
 	if v2Writer != nil {
 		router.Post("/v1/privacy/requests", server.privacyRequestV1)
 	}
+	if fundraisingWriter != nil && donationVerifier != nil {
+		router.Post("/internal/fundraising/batches", server.fundraisingBatches)
+	}
 	if v2Writer != nil && (identityTokens != nil || (legacyEnabled && productTokens != nil)) {
 		if legacyEnabled && productTokens != nil {
 			router.Post("/v2/tokens", server.productToken)
@@ -98,6 +119,48 @@ func newServer(writer EventWriter, tokens *auth.InstallationTokens, v2Writer V2W
 		router.Post("/v2/privacy/requests", server.privacyRequestV2)
 	}
 	return router
+}
+
+// fundraisingBatches accepts only the donation service HMAC. It intentionally
+// does not call authenticateProduct or any Identity verifier.
+func (s *Server) fundraisingBatches(response http.ResponseWriter, request *http.Request) {
+	if !httpx.IsJSON(request) {
+		httpx.WriteError(response, http.StatusUnsupportedMediaType, "content_type_must_be_application_json")
+		return
+	}
+	body, err := httpx.ReadBody(response, request, fundraising.MaxBatchBytes)
+	if err != nil {
+		writeBodyError(response, err)
+		return
+	}
+	serviceHeaders := auth.ServiceHeadersFromRequest(request)
+	if err := s.donationVerifier.Verify(request.Method, request.URL.EscapedPath(), body, serviceHeaders); err != nil {
+		httpx.WriteError(response, http.StatusUnauthorized, "invalid_donation_signature")
+		return
+	}
+	batch, err := fundraising.ParseBatch(body, s.now())
+	if err != nil {
+		httpx.WriteError(response, http.StatusBadRequest, "invalid_fundraising_batch")
+		return
+	}
+	idempotencyKey := request.Header.Get("Idempotency-Key")
+	if err := fundraising.ValidateIdempotencyKey(idempotencyKey, batch.BatchID); err != nil || serviceHeaders.RequestID != idempotencyKey {
+		httpx.WriteError(response, http.StatusBadRequest, "invalid_idempotency_key")
+		return
+	}
+	result, err := s.fundraisingWriter.WriteFundraising(request.Context(), batch.BatchID, body)
+	if err != nil {
+		if errors.Is(err, ErrWriterConflict) {
+			httpx.WriteError(response, http.StatusConflict, "idempotency_conflict")
+			return
+		}
+		s.logger.Error("writer rejected fundraising batch", "error", err)
+		httpx.WriteError(response, http.StatusBadGateway, "writer_unavailable")
+		return
+	}
+	httpx.WriteJSON(response, http.StatusAccepted, map[string]any{
+		"batch_id": batch.BatchID, "accepted_records": result.Count, "replayed": result.Replayed,
+	})
 }
 
 func (s *Server) health(response http.ResponseWriter, _ *http.Request) {

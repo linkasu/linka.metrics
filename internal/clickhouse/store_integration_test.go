@@ -110,7 +110,7 @@ func TestV2StoreIdempotencyAndSuppressionIntegration(t *testing.T) {
 	var progressCount uint64
 	if err := store.connection.QueryRow(ctx, `
 		SELECT count() FROM privacy_deletion_progress_v2 FINAL
-		WHERE request_id = ? AND status = 'completed'`, uuid.MustParse(privacyRequest.RequestID)).Scan(&progressCount); err != nil || progressCount != 6 {
+		WHERE request_id = ? AND status = 'completed'`, uuid.MustParse(privacyRequest.RequestID)).Scan(&progressCount); err != nil || progressCount != 7 {
 		t.Fatalf("completed privacy table progress = %d, error = %v", progressCount, err)
 	}
 	var eventCount uint64

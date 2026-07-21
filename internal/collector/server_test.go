@@ -29,6 +29,18 @@ type fakeV2Writer struct {
 	legacyBody []byte
 }
 
+type fakeFundraisingWriter struct {
+	calls int
+	body  []byte
+	err   error
+}
+
+func (w *fakeFundraisingWriter) WriteFundraising(_ context.Context, _ string, body []byte) (fundraisingWriteResult, error) {
+	w.calls++
+	w.body = append([]byte(nil), body...)
+	return fundraisingWriteResult{Count: 1}, w.err
+}
+
 func (w *fakeV2Writer) WriteV2(context.Context, string, []byte) (v2WriteResult, error) {
 	w.calls++
 	return v2WriteResult{Count: 1}, nil
@@ -200,6 +212,52 @@ func TestV2BatchRejectsScopeMismatchBeforeWriter(t *testing.T) {
 	}
 }
 
+func TestFundraisingBatchRequiresDonationHMACAndForwardsExactBody(t *testing.T) {
+	key := auth.ServiceKey{ID: "donations", Secret: []byte(strings.Repeat("d", 32))}
+	signer, err := auth.NewServiceSigner(key, "nko-donations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := auth.NewServiceVerifier(key, nil, "nko-donations", 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := fundraisingBatch(time.Now().UTC())
+	batchID := "10000000-0000-4000-8000-000000000001"
+	headers, err := signer.Sign(http.MethodPost, "/internal/fundraising/batches", batchID, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/internal/fundraising/batches", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", batchID)
+	auth.ApplyServiceHeaders(request.Header, headers)
+	response := httptest.NewRecorder()
+	writer := &fakeFundraisingWriter{}
+
+	NewServerWithIdentityV2AndFundraising(&fakeEventWriter{}, nil, writer, nil, nil, nil, false, verifier, testLogger()).ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted || writer.calls != 1 || !bytes.Equal(writer.body, body) {
+		t.Fatalf("status=%d calls=%d body=%s", response.Code, writer.calls, response.Body.String())
+	}
+}
+
+func TestFundraisingBatchRejectsIdentityBearerWithoutDonationHMAC(t *testing.T) {
+	key := auth.ServiceKey{ID: "donations", Secret: []byte(strings.Repeat("d", 32))}
+	verifier, _ := auth.NewServiceVerifier(key, nil, "nko-donations", 5*time.Minute)
+	request := httptest.NewRequest(http.MethodPost, "/internal/fundraising/batches", bytes.NewReader(fundraisingBatch(time.Now().UTC())))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer not-used-here")
+	response := httptest.NewRecorder()
+	writer := &fakeFundraisingWriter{}
+
+	NewServerWithIdentityV2AndFundraising(&fakeEventWriter{}, nil, writer, nil, nil, nil, false, verifier, testLogger()).ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized || writer.calls != 0 {
+		t.Fatalf("status=%d calls=%d", response.Code, writer.calls)
+	}
+}
+
 func validBatch(installationID string) []byte {
 	return []byte(fmt.Sprintf(`{
   "schema_version":1,
@@ -230,6 +288,24 @@ func collectorV2Batch(now time.Time, subjectKey string) []byte {
     "app":{"version":"1","build":"1","platform":"linux","os_version":"1","locale":"ru"}
   }]
 }`, subjectKey, now.UTC().Truncate(time.Second).Format(time.RFC3339), now.UTC().Add(-time.Minute).Truncate(time.Second).Format(time.RFC3339)))
+}
+
+func fundraisingBatch(now time.Time) []byte {
+	return []byte(fmt.Sprintf(`{
+  "schema_version":1,
+  "batch_id":"10000000-0000-4000-8000-000000000001",
+  "sent_at":%q,
+  "records":[{
+    "event_id":"20000000-0000-4000-8000-000000000002",
+    "occurred_at":%q,
+    "kind":"payment_succeeded",
+    "amount":"500.00",
+    "currency":"RUB",
+    "frequency":"one_time",
+    "attribution_source":"direct",
+    "attribution_campaign":null
+  }]
+}`, now.UTC().Truncate(time.Second).Format(time.RFC3339), now.UTC().Add(-time.Minute).Truncate(time.Second).Format(time.RFC3339)))
 }
 
 func testLogger() *slog.Logger {

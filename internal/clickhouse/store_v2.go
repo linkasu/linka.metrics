@@ -59,6 +59,8 @@ func (s *Store) InsertV2(ctx context.Context, batch v2.ValidatedBatch, bodySHA s
 		err = s.insertPlaysV2(ctx, batch, ingestedAt)
 	case "product":
 		err = s.insertProductV2(ctx, batch, ingestedAt)
+	case "outcome":
+		err = s.insertOutcomeV2(ctx, batch, ingestedAt)
 	default:
 		err = errors.New("unsupported validated stream")
 	}
@@ -87,6 +89,9 @@ func (s *Store) registerRecordsV2(ctx context.Context, batch v2.ValidatedBatch, 
 		recordIDs = append(recordIDs, uuid.MustParse(record.RecordID))
 	}
 	for _, record := range batch.ProductRecords {
+		recordIDs = append(recordIDs, uuid.MustParse(record.RecordID))
+	}
+	for _, record := range batch.OutcomeRecords {
 		recordIDs = append(recordIDs, uuid.MustParse(record.RecordID))
 	}
 	// Retried registry rows have the same batch and body. Reading every matching
@@ -277,6 +282,31 @@ func (s *Store) insertProductV2(ctx context.Context, input v2.ValidatedBatch, in
 	}
 	if err := batch.Send(); err != nil {
 		return fmt.Errorf("send product v2 batch: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) insertOutcomeV2(ctx context.Context, input v2.ValidatedBatch, ingestedAt time.Time) error {
+	batch, err := s.connection.PrepareBatch(ctx, `INSERT INTO product_outcomes_v2 (
+		product, product_key, subject_key, person_key, org_key, batch_id, record_id, occurred_at, kind,
+		app_session_id, app_version, app_build, platform, os_version, locale, result, source, mode,
+		count_bucket, duration_bucket, failure_code, ingested_at, expires_at
+	)`)
+	if err != nil {
+		return fmt.Errorf("prepare outcome v2 batch: %w", err)
+	}
+	for _, record := range input.OutcomeRecords {
+		if err := batch.Append(
+			string(input.Header.Scope.Product), &input.ProductKey, input.Header.Scope.SubjectKey, input.Header.Scope.PersonKey, input.Header.Scope.OrgKey,
+			uuid.MustParse(input.Header.BatchID), uuid.MustParse(record.RecordID), record.OccurredAtTime, record.Kind, uuid.MustParse(record.AppSessionID),
+			record.App.Version, record.App.Build, record.App.Platform, record.App.OSVersion, record.App.Locale, record.Result, record.Source, record.Mode,
+			record.CountBucket, record.DurationBucket, record.FailureCode, ingestedAt, expiresAt(ingestedAt, s.retention.Outcome),
+		); err != nil {
+			return fmt.Errorf("append outcome v2 record: %w", err)
+		}
+	}
+	if err := batch.Send(); err != nil {
+		return fmt.Errorf("send outcome v2 batch: %w", err)
 	}
 	return nil
 }

@@ -30,6 +30,8 @@ services:
       - ./migrations/010_v2_registry_privacy_scope.sql:/docker-entrypoint-initdb.d/010_v2_registry_privacy_scope.sql:ro
       - ./migrations/011_v2_product_stream.sql:/docker-entrypoint-initdb.d/011_v2_product_stream.sql:ro
       - ./migrations/012_v2_datalens_multi_product_views.sql:/docker-entrypoint-initdb.d/012_v2_datalens_multi_product_views.sql:ro
+      - ./migrations/013_v2_outcome_stream.sql:/docker-entrypoint-initdb.d/013_v2_outcome_stream.sql:ro
+      - ./migrations/014_fundraising_events.sql:/docker-entrypoint-initdb.d/014_fundraising_events.sql:ro
       - ./deploy/clickhouse/init/010-users.sh:/docker-entrypoint-initdb.d/900-users.sh:ro
       - ./deploy/clickhouse/config.d/resources.xml:/etc/clickhouse-server/config.d/resources.xml:ro
     healthcheck:
@@ -68,6 +70,7 @@ services:
       RETENTION_V2_TECHNICAL: ${RETENTION_V2_TECHNICAL:-}
       RETENTION_V2_PLAYS: ${RETENTION_V2_PLAYS:-}
       RETENTION_V2_PRODUCT: ${RETENTION_V2_PRODUCT:-}
+      RETENTION_V2_OUTCOME: ${RETENTION_V2_OUTCOME:-}
       RETENTION_V2_PRIVACY: ${RETENTION_V2_PRIVACY:-}
     expose:
       - "8081"
