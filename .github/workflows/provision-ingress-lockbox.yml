@@ -1,0 +1,55 @@
+name: Provision Ingress Lockbox
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    environment: production-yc
+    env:
+      DONATION_SECRET: ${{ secrets.INGRESS_DONATION_HMAC_ACTIVE_SECRET }}
+      TTS_SECRET: ${{ secrets.INGRESS_TTS_OUTCOME_HMAC_ACTIVE_SECRET }}
+      TTS_SUBJECT_KEY: ${{ secrets.INGRESS_TTS_OUTCOME_SUBJECT_KEY }}
+      YC_SA_KEY_JSON: ${{ secrets.YC_SA_KEY_JSON }}
+      YC_CLOUD_ID: ${{ secrets.YC_CLOUD_ID }}
+      YC_FOLDER_ID: ${{ secrets.YC_FOLDER_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate inputs
+        run: |
+          test "${#DONATION_SECRET}" -ge 32
+          test "${#TTS_SECRET}" -ge 32
+          [[ "$TTS_SUBJECT_KEY" =~ ^[a-f0-9]{64}$ ]]
+      - name: Install and configure YC CLI
+        run: |
+          curl -fsSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash -s -- -a
+          install -m 600 /dev/null /tmp/yc-key.json
+          printf '%s' "$YC_SA_KEY_JSON" > /tmp/yc-key.json
+          "$HOME/yandex-cloud/bin/yc" config set service-account-key /tmp/yc-key.json
+          "$HOME/yandex-cloud/bin/yc" config set cloud-id "$YC_CLOUD_ID"
+          "$HOME/yandex-cloud/bin/yc" config set folder-id "$YC_FOLDER_ID"
+      - name: Create sealed ingress keyring
+        id: lockbox
+        run: |
+          test -z "$("$HOME/yandex-cloud/bin/yc" lockbox secret list --format json | jq -r '.[] | select(.name == "linka-metrics-ingress") | .id')"
+          payload="$(jq -nc --arg donation "$DONATION_SECRET" --arg tts "$TTS_SECRET" '[
+            {key: "donation_ingest_hmac_active_secret", text_value: $donation},
+            {key: "tts_outcome_hmac_active_secret", text_value: $tts}
+          ]')"
+          secret="$("$HOME/yandex-cloud/bin/yc" lockbox secret create --name linka-metrics-ingress --description 'Independent HMAC secrets for LINKa Metrics service ingress' --payload "$payload" --deletion-protection --format json)"
+          printf 'id=%s\nversion=%s\n' "$(jq -r .id <<<"$secret")" "$(jq -r .current_version.id <<<"$secret")" >> "$GITHUB_OUTPUT"
+      - name: Publish non-secret deployment references
+        run: |
+          gh variable set YC_INGRESS_LOCKBOX_SECRET_ID --body '${{ steps.lockbox.outputs.id }}'
+          gh variable set YC_INGRESS_LOCKBOX_SECRET_VERSION_ID --body '${{ steps.lockbox.outputs.version }}'
+          gh variable set DONATION_INGEST_HMAC_ACTIVE_KEY_ID --body 'donations-2026-07'
+          gh variable set TTS_OUTCOME_HMAC_ACTIVE_KEY_ID --body 'tts-echo-2026-07'
+          gh variable set TTS_OUTCOME_SUBJECT_KEY --body "$TTS_SUBJECT_KEY"
+      - name: Remove service-account key
+        if: always()
+        run: rm -f /tmp/yc-key.json

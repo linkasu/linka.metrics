@@ -38,6 +38,9 @@ jobs:
       COLLECTOR_PUBLIC_URL: ${{ vars.COLLECTOR_PUBLIC_URL }}
       TTS_OUTCOME_HMAC_ACTIVE_KEY_ID: ${{ vars.TTS_OUTCOME_HMAC_ACTIVE_KEY_ID }}
       TTS_OUTCOME_SUBJECT_KEY: ${{ vars.TTS_OUTCOME_SUBJECT_KEY }}
+      DONATION_INGEST_HMAC_ACTIVE_KEY_ID: ${{ vars.DONATION_INGEST_HMAC_ACTIVE_KEY_ID }}
+      YC_INGRESS_LOCKBOX_SECRET_ID: ${{ vars.YC_INGRESS_LOCKBOX_SECRET_ID }}
+      YC_INGRESS_LOCKBOX_SECRET_VERSION_ID: ${{ vars.YC_INGRESS_LOCKBOX_SECRET_VERSION_ID }}
       YC_API_GATEWAY_ID: ${{ vars.YC_API_GATEWAY_ID }}
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +64,14 @@ jobs:
           case "$COLLECTOR_PUBLIC_URL" in https://*) ;; *) exit 1 ;; esac
           if [[ -n "$TTS_OUTCOME_SUBJECT_KEY" ]]; then
             [[ "$TTS_OUTCOME_SUBJECT_KEY" =~ ^[a-f0-9]{64}$ ]]
-            [[ -z "$TTS_OUTCOME_HMAC_ACTIVE_KEY_ID" || "$TTS_OUTCOME_HMAC_ACTIVE_KEY_ID" =~ ^[a-z][a-z0-9-]{0,31}$ ]]
+            [[ "$TTS_OUTCOME_HMAC_ACTIVE_KEY_ID" =~ ^[a-z][a-z0-9-]{0,31}$ ]]
+          fi
+          if [[ -n "$DONATION_INGEST_HMAC_ACTIVE_KEY_ID" ]]; then
+            [[ "$DONATION_INGEST_HMAC_ACTIVE_KEY_ID" =~ ^[a-z][a-z0-9-]{0,31}$ ]]
+          fi
+          if [[ -n "$TTS_OUTCOME_SUBJECT_KEY$DONATION_INGEST_HMAC_ACTIVE_KEY_ID" ]]; then
+            test -n "$YC_INGRESS_LOCKBOX_SECRET_ID"
+            test -n "$YC_INGRESS_LOCKBOX_SECRET_VERSION_ID"
           fi
       - name: Install YC CLI
         run: curl -fsSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash -s -- -a
@@ -117,9 +127,13 @@ jobs:
           WRITER_URL: ${{ secrets.WRITER_URL }}
         run: |
           audiences_base64="$(printf '%s' "$IDENTITY_TELEMETRY_AUDIENCES_JSON" | base64 --wrap=0)"
+          donation_ingest_secret=()
           tts_outcome_secret=()
+          if [[ -n "$DONATION_INGEST_HMAC_ACTIVE_KEY_ID" ]]; then
+            donation_ingest_secret=(--secret "environment-variable=DONATION_INGEST_HMAC_ACTIVE_SECRET,id=$YC_INGRESS_LOCKBOX_SECRET_ID,version-id=$YC_INGRESS_LOCKBOX_SECRET_VERSION_ID,key=donation_ingest_hmac_active_secret")
+          fi
           if [[ -n "$TTS_OUTCOME_SUBJECT_KEY" ]]; then
-            tts_outcome_secret=(--secret "environment-variable=TTS_OUTCOME_HMAC_ACTIVE_SECRET,id=$YC_LOCKBOX_SECRET_ID,version-id=$YC_LOCKBOX_SECRET_VERSION_ID,key=tts_outcome_hmac_active_secret")
+            tts_outcome_secret=(--secret "environment-variable=TTS_OUTCOME_HMAC_ACTIVE_SECRET,id=$YC_INGRESS_LOCKBOX_SECRET_ID,version-id=$YC_INGRESS_LOCKBOX_SECRET_VERSION_ID,key=tts_outcome_hmac_active_secret")
           fi
           "$HOME/yandex-cloud/bin/yc" serverless container revision deploy \
             --container-name linka-plays-metric-collector \
@@ -129,11 +143,12 @@ jobs:
             --execution-timeout 15s \
             --concurrency 16 \
             --service-account-id "$YC_RUNTIME_SA_ID" \
-            --environment "LISTEN_ADDR=:8080,WRITER_URL=$WRITER_URL,SERVICE_HMAC_ACTIVE_KEY_ID=collector-2026-07,DEPLOYMENT_ENVIRONMENT=production,INSTALLATION_TOKEN_MAX_AGE=720h,INSTALLATION_HMAC_ACTIVE_KEY_ID=${{ vars.INSTALLATION_HMAC_ACTIVE_KEY_ID }},INSTALLATION_HMAC_PREVIOUS_KEY_ID=${{ vars.INSTALLATION_HMAC_PREVIOUS_KEY_ID }},IDENTITY_JWKS_URL=$IDENTITY_JWKS_URL,IDENTITY_TOKEN_ISSUER=$IDENTITY_TOKEN_ISSUER,IDENTITY_TELEMETRY_AUDIENCES_BASE64=$audiences_base64,IDENTITY_TOKEN_MAX_LIFETIME=15m,CORS_ALLOWED_ORIGINS=$CORS_ALLOWED_ORIGINS,TTS_OUTCOME_HMAC_ACTIVE_KEY_ID=${TTS_OUTCOME_HMAC_ACTIVE_KEY_ID:-default},TTS_OUTCOME_SUBJECT_KEY=$TTS_OUTCOME_SUBJECT_KEY" \
+            --environment "LISTEN_ADDR=:8080,WRITER_URL=$WRITER_URL,SERVICE_HMAC_ACTIVE_KEY_ID=collector-2026-07,DEPLOYMENT_ENVIRONMENT=production,INSTALLATION_TOKEN_MAX_AGE=720h,INSTALLATION_HMAC_ACTIVE_KEY_ID=${{ vars.INSTALLATION_HMAC_ACTIVE_KEY_ID }},INSTALLATION_HMAC_PREVIOUS_KEY_ID=${{ vars.INSTALLATION_HMAC_PREVIOUS_KEY_ID }},IDENTITY_JWKS_URL=$IDENTITY_JWKS_URL,IDENTITY_TOKEN_ISSUER=$IDENTITY_TOKEN_ISSUER,IDENTITY_TELEMETRY_AUDIENCES_BASE64=$audiences_base64,IDENTITY_TOKEN_MAX_LIFETIME=15m,CORS_ALLOWED_ORIGINS=$CORS_ALLOWED_ORIGINS,DONATION_INGEST_HMAC_ACTIVE_KEY_ID=$DONATION_INGEST_HMAC_ACTIVE_KEY_ID,TTS_OUTCOME_HMAC_ACTIVE_KEY_ID=$TTS_OUTCOME_HMAC_ACTIVE_KEY_ID,TTS_OUTCOME_SUBJECT_KEY=$TTS_OUTCOME_SUBJECT_KEY" \
             --secret "environment-variable=INSTALLATION_HMAC_ACTIVE_SECRET,id=$YC_LOCKBOX_SECRET_ID,version-id=$YC_LOCKBOX_SECRET_VERSION_ID,key=installation_hmac_active_secret" \
             --secret "environment-variable=INSTALLATION_HMAC_PREVIOUS_SECRET,id=$YC_LOCKBOX_SECRET_ID,version-id=$YC_LOCKBOX_SECRET_VERSION_ID,key=installation_hmac_previous_secret" \
             --secret "environment-variable=WRITER_HMAC_SECRET,id=$YC_LOCKBOX_SECRET_ID,version-id=$YC_LOCKBOX_SECRET_VERSION_ID,key=writer_hmac_secret" \
             --secret "environment-variable=SERVICE_HMAC_ACTIVE_SECRET,id=$YC_LOCKBOX_SECRET_ID,version-id=$YC_LOCKBOX_SECRET_VERSION_ID,key=service_hmac_active_secret" \
+            "${donation_ingest_secret[@]}" \
             "${tts_outcome_secret[@]}"
       - name: Verify collector routes
         run: |
