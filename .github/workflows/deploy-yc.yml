@@ -38,6 +38,8 @@ jobs:
       COLLECTOR_PUBLIC_URL: ${{ vars.COLLECTOR_PUBLIC_URL }}
       TTS_OUTCOME_HMAC_ACTIVE_KEY_ID: ${{ vars.TTS_OUTCOME_HMAC_ACTIVE_KEY_ID }}
       TTS_OUTCOME_SUBJECT_KEY: ${{ vars.TTS_OUTCOME_SUBJECT_KEY }}
+      YC_TTS_OUTCOME_LOCKBOX_SECRET_ID: ${{ vars.YC_TTS_OUTCOME_LOCKBOX_SECRET_ID }}
+      YC_TTS_OUTCOME_LOCKBOX_SECRET_VERSION_ID: ${{ vars.YC_TTS_OUTCOME_LOCKBOX_SECRET_VERSION_ID }}
       DONATION_INGEST_HMAC_ACTIVE_KEY_ID: ${{ vars.DONATION_INGEST_HMAC_ACTIVE_KEY_ID }}
       YC_INGRESS_LOCKBOX_SECRET_ID: ${{ vars.YC_INGRESS_LOCKBOX_SECRET_ID }}
       YC_INGRESS_LOCKBOX_SECRET_VERSION_ID: ${{ vars.YC_INGRESS_LOCKBOX_SECRET_VERSION_ID }}
@@ -65,6 +67,8 @@ jobs:
           if [[ -n "$TTS_OUTCOME_SUBJECT_KEY" ]]; then
             [[ "$TTS_OUTCOME_SUBJECT_KEY" =~ ^[a-f0-9]{64}$ ]]
             [[ "$TTS_OUTCOME_HMAC_ACTIVE_KEY_ID" =~ ^[a-z][a-z0-9-]{0,31}$ ]]
+            test -n "$YC_TTS_OUTCOME_LOCKBOX_SECRET_ID"
+            test -n "$YC_TTS_OUTCOME_LOCKBOX_SECRET_VERSION_ID"
           fi
           if [[ -n "$DONATION_INGEST_HMAC_ACTIVE_KEY_ID" ]]; then
             [[ "$DONATION_INGEST_HMAC_ACTIVE_KEY_ID" =~ ^[a-z][a-z0-9-]{0,31}$ ]]
@@ -133,7 +137,7 @@ jobs:
             donation_ingest_secret=(--secret "environment-variable=DONATION_INGEST_HMAC_ACTIVE_SECRET,id=$YC_INGRESS_LOCKBOX_SECRET_ID,version-id=$YC_INGRESS_LOCKBOX_SECRET_VERSION_ID,key=donation_ingest_hmac_active_secret")
           fi
           if [[ -n "$TTS_OUTCOME_SUBJECT_KEY" ]]; then
-            tts_outcome_secret=(--secret "environment-variable=TTS_OUTCOME_HMAC_ACTIVE_SECRET,id=$YC_INGRESS_LOCKBOX_SECRET_ID,version-id=$YC_INGRESS_LOCKBOX_SECRET_VERSION_ID,key=tts_outcome_hmac_active_secret")
+            tts_outcome_secret=(--secret "environment-variable=TTS_OUTCOME_HMAC_ACTIVE_SECRET,id=$YC_TTS_OUTCOME_LOCKBOX_SECRET_ID,version-id=$YC_TTS_OUTCOME_LOCKBOX_SECRET_VERSION_ID,key=tts_outcome_hmac_active_secret")
           fi
           "$HOME/yandex-cloud/bin/yc" serverless container revision deploy \
             --container-name linka-plays-metric-collector \

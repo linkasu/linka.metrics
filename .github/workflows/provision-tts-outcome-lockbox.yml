@@ -1,0 +1,37 @@
+name: Provision TTS Outcome Lockbox
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    environment: production-yc
+    env:
+      TTS_SECRET: ${{ secrets.TTS_OUTCOME_HMAC_ACTIVE_SECRET }}
+      YC_SA_KEY_JSON: ${{ secrets.YC_SA_KEY_JSON }}
+      YC_CLOUD_ID: ${{ secrets.YC_CLOUD_ID }}
+      YC_FOLDER_ID: ${{ secrets.YC_FOLDER_ID }}
+    steps:
+      - name: Validate secret
+        run: test "${#TTS_SECRET}" -ge 32
+      - name: Install and configure YC CLI
+        run: |
+          curl -fsSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash -s -- -a
+          install -m 600 /dev/null /tmp/yc-key.json
+          printf '%s' "$YC_SA_KEY_JSON" > /tmp/yc-key.json
+          "$HOME/yandex-cloud/bin/yc" config set service-account-key /tmp/yc-key.json
+          "$HOME/yandex-cloud/bin/yc" config set cloud-id "$YC_CLOUD_ID"
+          "$HOME/yandex-cloud/bin/yc" config set folder-id "$YC_FOLDER_ID"
+      - name: Create sealed TTS keyring
+        run: |
+          test -z "$("$HOME/yandex-cloud/bin/yc" lockbox secret list --format json | jq -r '.[] | select(.name == "linka-tts-outcome-ingress") | .id')"
+          payload="$(jq -nc --arg tts "$TTS_SECRET" '[{key: "tts_outcome_hmac_active_secret", text_value: $tts}]')"
+          secret="$("$HOME/yandex-cloud/bin/yc" lockbox secret create --name linka-tts-outcome-ingress --description 'Independent HMAC secret for TTS outcomes' --payload "$payload" --deletion-protection --format json)"
+          printf 'TTS collector Lockbox: id=%s version=%s\n' "$(jq -r .id <<<"$secret")" "$(jq -r .current_version.id <<<"$secret")"
+      - name: Remove service-account key
+        if: always()
+        run: rm -f /tmp/yc-key.json
