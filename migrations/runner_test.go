@@ -98,10 +98,10 @@ func TestMultiProductMigrationsAreEmbedded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest := migrations[len(migrations)-1]; latest.Version != 14 || latest.Name != "014_fundraising_events.sql" {
+	if latest := migrations[len(migrations)-1]; latest.Version != 15 || latest.Name != "015_v2_outcomes_daily_memory.sql" {
 		t.Fatalf("latest migration = %03d %s", latest.Version, latest.Name)
 	}
-	var productSQL, datalensSQL, outcomeSQL, fundraisingSQL string
+	var productSQL, datalensSQL, outcomeSQL, fundraisingSQL, outcomeMemorySQL string
 	for _, migration := range migrations {
 		switch migration.Version {
 		case 11:
@@ -112,6 +112,8 @@ func TestMultiProductMigrationsAreEmbedded(t *testing.T) {
 			outcomeSQL = strings.Join(migration.Statements, "\n")
 		case 14:
 			fundraisingSQL = strings.Join(migration.Statements, "\n")
+		case 15:
+			outcomeMemorySQL = strings.Join(migration.Statements, "\n")
 		}
 	}
 	if !strings.Contains(productSQL, "product_events_v2") || !strings.Contains(productSQL, "datalens_product_v2") {
@@ -125,5 +127,8 @@ func TestMultiProductMigrationsAreEmbedded(t *testing.T) {
 	}
 	if !strings.Contains(fundraisingSQL, "fundraising_events_v1") || !strings.Contains(fundraisingSQL, "fundraising_finance_daily_v1") {
 		t.Fatal("fundraising migration is incomplete")
+	}
+	if !strings.Contains(outcomeMemorySQL, "uniqCombined64") || !strings.Contains(outcomeMemorySQL, "max_bytes_before_external_group_by") {
+		t.Fatal("outcome memory migration is incomplete")
 	}
 }

@@ -32,6 +32,7 @@ services:
       - ./migrations/012_v2_datalens_multi_product_views.sql:/docker-entrypoint-initdb.d/012_v2_datalens_multi_product_views.sql:ro
       - ./migrations/013_v2_outcome_stream.sql:/docker-entrypoint-initdb.d/013_v2_outcome_stream.sql:ro
       - ./migrations/014_fundraising_events.sql:/docker-entrypoint-initdb.d/014_fundraising_events.sql:ro
+      - ./migrations/015_v2_outcomes_daily_memory.sql:/docker-entrypoint-initdb.d/015_v2_outcomes_daily_memory.sql:ro
       - ./deploy/clickhouse/init/010-users.sh:/docker-entrypoint-initdb.d/900-users.sh:ro
       - ./deploy/clickhouse/config.d/resources.xml:/etc/clickhouse-server/config.d/resources.xml:ro
     healthcheck:
