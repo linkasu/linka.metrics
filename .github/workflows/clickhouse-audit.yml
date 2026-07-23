@@ -1,0 +1,46 @@
+name: ClickHouse Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          install -m 600 /dev/null ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Query aggregate telemetry state
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" "cd '$VPS_DEPLOY_PATH' && docker compose exec -T clickhouse sh -s" <<'REMOTE'
+          set -eu
+          query() {
+            clickhouse-client --user "$CLICKHOUSE_ADMIN_USER" --password "$CLICKHOUSE_ADMIN_PASSWORD" --format TSVWithNames --query "$1"
+          }
+          printf '\n== snapshot ==\n'
+          query "SELECT now('UTC') AS captured_at, version() AS clickhouse_version"
+          printf '\n== migrations ==\n'
+          query "SELECT version, name, applied_at FROM linka_metric.schema_migrations FINAL ORDER BY version"
+          printf '\n== table sizes ==\n'
+          query "SELECT table, formatReadableSize(sum(bytes_on_disk)) AS size, sum(rows) AS rows FROM system.parts WHERE database = 'linka_metric' AND active GROUP BY table ORDER BY sum(bytes_on_disk) DESC"
+          printf '\n== outcomes on 2026-07-23 UTC ==\n'
+          query "SELECT product, kind, result, count() AS events, min(occurred_at) AS first_at, max(occurred_at) AS last_at FROM linka_metric.product_outcomes_v2 FINAL WHERE occurred_at >= toDateTime('2026-07-23 00:00:00', 'UTC') AND occurred_at < toDateTime('2026-07-24 00:00:00', 'UTC') GROUP BY product, kind, result ORDER BY events DESC"
+          printf '\n== ingestion ==\n'
+          query "SELECT product, stream, status, count() AS batches, sum(record_count) AS records, max(updated_at) AS last_update FROM linka_metric.ingest_batches_v2 FINAL GROUP BY product, stream, status ORDER BY last_update DESC"
+          printf '\n== privacy ==\n'
+          query "SELECT active, count() AS suppressions FROM linka_metric.privacy_suppressions_v2 FINAL GROUP BY active ORDER BY active DESC"
+          REMOTE
