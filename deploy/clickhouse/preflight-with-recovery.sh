@@ -6,6 +6,15 @@ if sh deploy/clickhouse/preflight.sh; then
 fi
 
 echo "ClickHouse preflight failed; restarting ClickHouse once before retry" >&2
+docker compose --profile privacy stop writer privacy-worker
+restore_services=true
+trap '
+  status=$?
+  if [ "$status" -ne 0 ] && [ "$restore_services" = true ]; then
+    docker compose --profile privacy up -d --no-build writer privacy-worker || true
+  fi
+  exit "$status"
+' EXIT
 docker compose restart clickhouse
 
 attempt=0
@@ -21,3 +30,4 @@ do
 done
 
 sh deploy/clickhouse/preflight.sh
+restore_services=false
