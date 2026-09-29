@@ -265,10 +265,9 @@ func TestV2BatchReservationResumesSameBodyAndRejectsChangedBodyIntegration(t *te
 	if err != nil || result.Replayed || result.Count != 1 {
 		t.Fatalf("same-body resume result=%+v err=%v", result, err)
 	}
-	var status string
-	if err := store.connection.QueryRow(ctx, `SELECT status FROM ingest_batches_v2 FINAL WHERE product = ? AND batch_id = ?`,
-		string(batch.Header.Scope.Product), uuid.MustParse(batchID)).Scan(&status); err != nil || status != "completed" {
-		t.Fatalf("batch ledger status=%s err=%v", status, err)
+	_, status, _, exists, err := store.batchLedgerV2(ctx, string(batch.Header.Scope.Product), batchID)
+	if err != nil || !exists || status != "completed" {
+		t.Fatalf("latest batch ledger status=%s exists=%v err=%v", status, exists, err)
 	}
 	var count uint64
 	if err := store.connection.QueryRow(ctx, `SELECT count() FROM common_events_v2 FINAL WHERE product = ? AND record_id = ?`,
