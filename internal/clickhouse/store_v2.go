@@ -142,7 +142,7 @@ func (s *Store) batchLedgerV2(ctx context.Context, productID, batchID string) (s
 	var ingestedAt time.Time
 	err := s.connection.QueryRow(ctx, `
 		SELECT body_sha256, status, ingested_at
-		FROM ingest_batches_v2 FINAL
+		FROM ingest_batches_v2
 		WHERE product = ? AND batch_id = ?
 		ORDER BY ingested_at DESC
 		LIMIT 1`, productID, uuid.MustParse(batchID)).Scan(&bodySHA, &status, &ingestedAt)
