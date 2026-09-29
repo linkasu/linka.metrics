@@ -156,19 +156,28 @@ func (s *Store) batchLedgerV2(ctx context.Context, productID, batchID string) (s
 }
 
 func (s *Store) isSuppressed(ctx context.Context, scope v2.Scope, productKey string) (bool, error) {
-	var count uint64
+	var suppressed uint8
 	err := s.connection.QueryRow(ctx, `
-		SELECT count()
-		FROM privacy_suppressions_v2 FINAL
-		WHERE active = true AND product = ? AND product_key = ? AND (
-			subject_key = ? OR
-			(? != '' AND ifNull(person_key, '') = ?) OR
-			(? != '' AND ifNull(org_key, '') = ?)
-		)`, string(scope.Product), productKey, scope.SubjectKey, stringValue(scope.PersonKey), stringValue(scope.PersonKey), stringValue(scope.OrgKey), stringValue(scope.OrgKey)).Scan(&count)
+		SELECT 1
+		FROM (
+			SELECT request_id, argMax(active, updated_at) AS latest_active
+			FROM privacy_suppressions_v2
+			WHERE product = ? AND product_key = ? AND (
+				subject_key = ? OR
+				(? != '' AND ifNull(person_key, '') = ?) OR
+				(? != '' AND ifNull(org_key, '') = ?)
+			)
+			GROUP BY request_id
+		)
+		WHERE latest_active = true
+		LIMIT 1`, string(scope.Product), productKey, scope.SubjectKey, stringValue(scope.PersonKey), stringValue(scope.PersonKey), stringValue(scope.OrgKey), stringValue(scope.OrgKey)).Scan(&suppressed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("query privacy suppression: %w", err)
 	}
-	return count > 0, nil
+	return suppressed == 1, nil
 }
 
 func (s *Store) insertBatchLedgerV2(ctx context.Context, batch v2.ValidatedBatch, bodySHA string, ingestedAt time.Time, status string) error {
