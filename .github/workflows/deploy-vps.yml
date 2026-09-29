@@ -77,7 +77,7 @@ jobs:
             IMAGE_TAG='$IMAGE_TAG' docker compose --profile ops --profile migration --profile privacy pull writer disk-alert migrate privacy-worker; \
             IMAGE_TAG='$IMAGE_TAG' docker compose up -d --no-build clickhouse; \
             IMAGE_TAG='$IMAGE_TAG' docker compose --profile migration run --rm migrate; \
-            sh deploy/clickhouse/preflight.sh; \
+            sh deploy/clickhouse/preflight-with-recovery.sh; \
             sh deploy/clickhouse/configure-v2-users.sh; \
             IMAGE_TAG='$IMAGE_TAG' docker compose --profile privacy up -d --no-build writer privacy-worker caddy"
 
