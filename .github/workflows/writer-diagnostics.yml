@@ -28,6 +28,8 @@ jobs:
           VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
         run: |
           ssh "$VPS_USER@$VPS_HOST" \
+            "free -h && df -h / && docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}'"
+          ssh "$VPS_USER@$VPS_HOST" \
             "cd '$VPS_DEPLOY_PATH' && \
              docker compose logs --no-color --since=2h writer clickhouse 2>&1 | \
              grep -Ei 'error|exception|failed|memory|store|insert' | \
