@@ -1,0 +1,38 @@
+name: ClickHouse Maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type TRUNCATE_SYSTEM_ERROR_LOG
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  truncate-error-log:
+    if: github.event.inputs.confirm == 'TRUNCATE_SYSTEM_ERROR_LOG'
+    runs-on: ubuntu-latest
+    environment: production-vps
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          install -m 600 /dev/null ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Truncate ClickHouse system error log
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" \
+            "cd '$VPS_DEPLOY_PATH' && \
+             docker compose exec -T clickhouse sh -eu -c \
+             'clickhouse-client --user \"\$CLICKHOUSE_ADMIN_USER\" --password \"\$CLICKHOUSE_ADMIN_PASSWORD\" --query \"TRUNCATE TABLE system.error_log\"'"
