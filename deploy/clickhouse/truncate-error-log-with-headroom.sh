@@ -30,7 +30,7 @@ cleanup() {
 trap cleanup EXIT
 
 docker compose --profile privacy stop writer privacy-worker
-docker update --memory 3584m --memory-swap 5g "$container" >/dev/null
+docker update --memory 3800m --memory-swap 5800m "$container" >/dev/null
 docker compose restart clickhouse
 wait_ready
 docker compose exec -T clickhouse sh -eu -c \
