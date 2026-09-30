@@ -33,6 +33,4 @@ jobs:
           VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
         run: |
           ssh "$VPS_USER@$VPS_HOST" \
-            "cd '$VPS_DEPLOY_PATH' && \
-             docker compose exec -T clickhouse sh -eu -c \
-             'clickhouse-client --user \"\$CLICKHOUSE_ADMIN_USER\" --password \"\$CLICKHOUSE_ADMIN_PASSWORD\" --query \"TRUNCATE TABLE system.error_log\"'"
+            "cd '$VPS_DEPLOY_PATH' && sh deploy/clickhouse/truncate-error-log-with-headroom.sh"

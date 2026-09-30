@@ -22,7 +22,7 @@ until docker compose exec -T clickhouse sh -eu -c \
   'clickhouse-client --user "$CLICKHOUSE_ADMIN_USER" --password "$CLICKHOUSE_ADMIN_PASSWORD" --query "SELECT 1" >/dev/null'
 do
   attempt=$((attempt + 1))
-  if [ "$attempt" -ge 30 ]; then
+  if [ "$attempt" -ge 60 ]; then
     echo "ClickHouse did not become ready after restart" >&2
     exit 1
   fi
