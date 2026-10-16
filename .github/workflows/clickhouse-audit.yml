@@ -17,13 +17,18 @@ on:
         required: false
         type: boolean
         default: false
+      detach_archives:
+        description: Detach only the seven approved disabled system log archives, preserving data
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   audit:
-    if: ${{ !inputs.apply_recovery }}
+    if: ${{ !inputs.apply_recovery && !inputs.detach_archives }}
     runs-on: ubuntu-latest
     steps:
       - name: Configure SSH
@@ -109,9 +114,12 @@ jobs:
           REMOTE
 
   recovery:
-    if: inputs.apply_recovery
+    if: inputs.apply_recovery && !inputs.detach_archives
     runs-on: ubuntu-latest
     environment: production-vps
+    concurrency:
+      group: clickhouse-tts-recovery
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - name: Validate the approved configuration
@@ -195,3 +203,70 @@ jobs:
       - name: Remove the isolated startup-check container
         if: always()
         run: docker rm -f clickhouse-recovery-check || true
+
+  detach-archives:
+    if: inputs.detach_archives && !inputs.apply_recovery
+    runs-on: ubuntu-latest
+    environment: production-vps
+    concurrency:
+      group: clickhouse-tts-recovery
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify reversible detach on the production ClickHouse version
+        run: |
+          docker run -d --name clickhouse-detach-check --memory 2g \
+            -e CLICKHOUSE_SKIP_USER_SETUP=1 \
+            -v "$PWD/deploy/clickhouse/config.d/resources.xml:/etc/clickhouse-server/config.d/resources.xml:ro" \
+            clickhouse/clickhouse-server:25.3.6.56-alpine
+          timeout 180 bash -c 'until docker exec clickhouse-detach-check clickhouse-client --query "SELECT 1"; do sleep 3; done'
+          docker exec clickhouse-detach-check clickhouse-client --multiquery --query \
+            'CREATE TABLE system.tts_detach_check (value UInt8) ENGINE=MergeTree ORDER BY tuple(); INSERT INTO system.tts_detach_check VALUES (1); DETACH TABLE system.tts_detach_check PERMANENTLY SYNC;'
+          test "$(docker exec clickhouse-detach-check clickhouse-client --query 'EXISTS TABLE system.tts_detach_check')" = 0
+          docker exec clickhouse-detach-check clickhouse-client --query 'ATTACH TABLE system.tts_detach_check'
+          test "$(docker exec clickhouse-detach-check clickhouse-client --query 'SELECT count() FROM system.tts_detach_check')" = 1
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          install -m 600 /dev/null ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf 'Host *\n  ControlMaster auto\n  ControlPersist 300\n  ControlPath /tmp/tts-detach-%%C\n' > ~/.ssh/config
+      - name: Preserve definitions and detach only the approved archives
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+        run: |
+          {
+          printf 'set -- %q\n' "$VPS_DEPLOY_PATH"
+          cat <<'REMOTE'
+          set -euo pipefail
+          cd "$1"
+          test "$(sha256sum deploy/clickhouse/config.d/resources.xml | cut -d' ' -f1)" = 904bd34f3717c719b9090c9c98d710242ab062403d457647cee681105c88fb5b
+          backup=$(mktemp -d "$PWD/.tts-log-archive-definitions.XXXXXXXX")
+          tables=(trace_log processors_profile_log text_log metric_log asynchronous_metric_log query_metric_log latency_log)
+          query() {
+            docker compose exec -T clickhouse sh -c \
+              'exec clickhouse-client --user "$CLICKHOUSE_ADMIN_USER" --password "$CLICKHOUSE_ADMIN_PASSWORD" --query "$1"' sh "$1"
+          }
+          for table in "${tables[@]}"; do
+            query "SHOW CREATE TABLE system.$table FORMAT TSVRaw" > "$backup/$table.sql"
+            test -s "$backup/$table.sql"
+          done
+          echo 'Definitions backed up before the first DETACH; data files are retained.'
+          for table in "${tables[@]}"; do
+            query "DETACH TABLE system.$table PERMANENTLY SYNC"
+            test "$(query "EXISTS TABLE system.$table")" = 0
+            echo "Detached system.$table; restore with ATTACH TABLE system.$table"
+          done
+          query "SELECT metric, value FROM system.metrics WHERE metric = 'MemoryTracking'"
+          echo 'No application tables, data files or table rows were deleted.'
+          REMOTE
+          } | ssh "$VPS_USER@$VPS_HOST" bash -s
+      - name: Remove the isolated detach-check container
+        if: always()
+        run: docker rm -f clickhouse-detach-check || true
