@@ -18,7 +18,7 @@ on:
         type: boolean
         default: false
       detach_archives:
-        description: Detach only the seven approved disabled system log archives, preserving data
+        description: Detach only the three remaining approved system log archives, preserving data
         required: false
         type: boolean
         default: false
@@ -132,7 +132,7 @@ jobs:
           assert root.findtext('max_server_memory_usage_to_ram_ratio') == '0.85'
           for node in root.find('merge_tree'):
               assert 0 <= int(node.text) <= tasks
-          for name in ('trace_log', 'processors_profile_log', 'text_log', 'metric_log', 'asynchronous_metric_log', 'query_metric_log', 'latency_log'):
+          for name in ('trace_log', 'processors_profile_log', 'text_log', 'metric_log', 'asynchronous_metric_log', 'query_metric_log', 'latency_log', 'query_log', 'part_log', 'error_log'):
               assert root.find(name).get('remove') == '1'
           PY
       - name: Verify startup with the production ClickHouse version
@@ -167,8 +167,8 @@ jobs:
           set -euo pipefail
           cd "$1"
           file=deploy/clickhouse/config.d/resources.xml
-          backup="$file.before-tts-20261016"
-          test "$(sha256sum "$file" | cut -d' ' -f1)" = 99bdedb18c479bd5c4709431587510a17565507184c627c170a75819bd73969f
+          backup="$file.before-tts-final-logs-20261016"
+          test "$(sha256sum "$file" | cut -d' ' -f1)" = 904bd34f3717c719b9090c9c98d710242ab062403d457647cee681105c88fb5b
           test ! -e "$backup"
           cp -p "$file" "$backup"
           rollback() {
@@ -198,8 +198,10 @@ jobs:
           rm -- "$2"
           docker compose ps clickhouse
           echo 'ClickHouse healthy; data volumes, schema, image and container limits unchanged.'
+          echo COMPLETE_TTS_CLICKHOUSE_RESTART
           REMOTE
-          } | ssh "$VPS_USER@$VPS_HOST" bash -s
+          } | ssh "$VPS_USER@$VPS_HOST" bash -s | tee "$RUNNER_TEMP/tts-clickhouse-restart.log"
+          grep -qx COMPLETE_TTS_CLICKHOUSE_RESTART "$RUNNER_TEMP/tts-clickhouse-restart.log"
       - name: Remove the isolated startup-check container
         if: always()
         run: docker rm -f clickhouse-recovery-check || true
@@ -246,9 +248,9 @@ jobs:
           cat <<'REMOTE'
           set -euo pipefail
           cd "$1"
-          test "$(sha256sum deploy/clickhouse/config.d/resources.xml | cut -d' ' -f1)" = 904bd34f3717c719b9090c9c98d710242ab062403d457647cee681105c88fb5b
+          test "$(sha256sum deploy/clickhouse/config.d/resources.xml | cut -d' ' -f1)" = 4eb7ab832dee898fd77d49dd720a93742a3baa2e3e5b4ec9535ba783080bab46
           backup=$(mktemp -d "$PWD/.tts-log-archive-definitions.XXXXXXXX")
-          tables=(trace_log processors_profile_log text_log metric_log asynchronous_metric_log query_metric_log latency_log)
+          tables=(query_log part_log error_log)
           query() {
             docker compose exec -T clickhouse sh -c \
               'exec clickhouse-client --user "$CLICKHOUSE_ADMIN_USER" --password "$CLICKHOUSE_ADMIN_PASSWORD" --query "$1"' sh "$1" < /dev/null
@@ -268,7 +270,7 @@ jobs:
           echo COMPLETE_TTS_ARCHIVE_DETACH
           REMOTE
           } | ssh "$VPS_USER@$VPS_HOST" bash -s | tee "$RUNNER_TEMP/tts-archive-detach.log"
-          test "$(grep -c '^Detached system\.' "$RUNNER_TEMP/tts-archive-detach.log")" = 7
+          test "$(grep -c '^Detached system\.' "$RUNNER_TEMP/tts-archive-detach.log")" = 3
           grep -qx COMPLETE_TTS_ARCHIVE_DETACH "$RUNNER_TEMP/tts-archive-detach.log"
       - name: Remove the isolated detach-check container
         if: always()
