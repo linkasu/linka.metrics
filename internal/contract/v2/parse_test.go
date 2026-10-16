@@ -43,6 +43,33 @@ func TestParseBatchAcceptsRegisteredOutcomeAndRejectsUnsafeValues(t *testing.T) 
 	}
 }
 
+func TestParseBatchEnforcesTTSRequestSources(t *testing.T) {
+	for _, source := range []string{"openai", "yandex", "sber", "local"} {
+		t.Run(source, func(t *testing.T) {
+			body := outcomeBatch("linka-tts", "request_completed", `"result":"completed"`, fmt.Sprintf(`"source":%q`, source), `"count_bucket":"one"`, `"duration_bucket":"under_5s"`)
+			batch, err := ParseBatch([]byte(body), testNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(batch.OutcomeRecords) != 1 || batch.OutcomeRecords[0].Source == nil || *batch.OutcomeRecords[0].Source != source {
+				t.Fatalf("unexpected outcome records: %+v", batch.OutcomeRecords)
+			}
+		})
+	}
+	for _, sourceField := range []string{`"source":"unknown"`, `"source":""`, ""} {
+		t.Run("reject/"+sourceField, func(t *testing.T) {
+			fields := []string{`"result":"completed"`, `"count_bucket":"one"`, `"duration_bucket":"under_5s"`}
+			if sourceField != "" {
+				fields = append(fields, sourceField)
+			}
+			body := outcomeBatch("linka-tts", "request_completed", fields...)
+			if _, err := ParseBatch([]byte(body), testNow); err == nil {
+				t.Fatalf("accepted invalid TTS source field %q", sourceField)
+			}
+		})
+	}
+}
+
 func TestParseBatchEnforcesOutcomeFieldRules(t *testing.T) {
 	tests := []struct {
 		product   string
