@@ -12,6 +12,10 @@ on:
       image_tag:
         description: Published writer tag, for example sha-<commit>
         required: true
+      writer_only:
+        description: Update only the existing VPS writer, without migrations
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -23,8 +27,9 @@ env:
 jobs:
   deploy:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      !inputs.writer_only &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'))
     runs-on: ubuntu-latest
     environment: production-vps
     env:
@@ -97,3 +102,104 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
         run: ssh "$VPS_USER@$VPS_HOST" "cd '$VPS_DEPLOY_PATH' && docker compose ps --status running --services | grep -qx writer"
+
+  writer:
+    if: github.event_name == 'workflow_dispatch' && inputs.writer_only
+    runs-on: ubuntu-latest
+    environment: production-vps
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Validate immutable writer image
+        run: |
+          [[ "$IMAGE_TAG" =~ ^sha-[0-9a-f]{40}$ ]]
+          test "$IMAGE_TAG" = "sha-$(git rev-parse HEAD)"
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          install -m 600 /dev/null ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' 'Host *' '  ControlMaster auto' '  ControlPath /tmp/tts-writer-%C' '  ControlPersist 60' > ~/.ssh/config
+      - name: Pull and update only writer, with rollback
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          target="$VPS_USER@$VPS_HOST"
+          docker_config=$(ssh "$target" 'mktemp -d /tmp/tts-writer-auth.XXXXXXXXXX')
+          [[ "$docker_config" =~ ^/tmp/tts-writer-auth\.[a-zA-Z0-9]+$ ]]
+          cleanup() {
+            ssh "$target" "rm -f -- '$docker_config/config.json' && rmdir -- '$docker_config'"
+          }
+          trap cleanup EXIT
+          printf -v login 'DOCKER_CONFIG=%q docker login ghcr.io --username %q --password-stdin' "$docker_config" "$GHCR_USER"
+          printf '%s' "$GHCR_TOKEN" | ssh "$target" "$login"
+          printf -v command 'bash -s -- %q %q %q' "$VPS_DEPLOY_PATH" "$IMAGE_TAG" "$docker_config"
+          ssh "$target" "$command" <<'REMOTE'
+          set -euo pipefail
+          cd -- "$1"
+          export DOCKER_CONFIG="$3"
+          new_tag="$2"
+          repository=ghcr.io/linkasu/linka.plays-metric-writer
+          baseline="$repository:sha-e32585d667463065e862ba2066a06eb107be3c40"
+          writer=$(docker compose ps -a -q writer)
+          test -n "$writer"
+          old_image=$(docker inspect --format '{{.Config.Image}}' "$writer")
+          docker inspect --format 'Before: image={{.Config.Image}} id={{.Image}}' "$writer"
+          if [ "$old_image" != "$baseline" ]; then
+            echo 'Writer image drift detected; refusing update.' >&2
+            exit 1
+          fi
+          old_tag=${old_image##*:}
+          before_env=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$writer" | LC_ALL=C sort)
+          runtime_format='{{.Config.User}}|{{json .Mounts}}|{{.HostConfig.Memory}}|{{.HostConfig.MemorySwap}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.ReadonlyRootfs}}'
+          before_runtime=$(docker inspect --format "$runtime_format" "$writer")
+          unchanged_runtime() {
+            local container
+            container=$(docker compose ps -a -q writer) || return 1
+            test "$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container" | LC_ALL=C sort)" = "$before_env" &&
+              test "$(docker inspect --format "$runtime_format" "$container")" = "$before_runtime"
+          }
+          wait_healthy() {
+            local container status deadline
+            container=$(docker compose ps -a -q writer) || return 1
+            test -n "$container" || return 1
+            deadline=$((SECONDS + 120))
+            while (( SECONDS < deadline )); do
+              status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container") || return 1
+              case "$status" in
+                healthy) return 0 ;;
+                starting) sleep 1 ;;
+                *) echo "Writer health failed: $status" >&2; return 1 ;;
+              esac
+            done
+            echo 'Writer health timed out after 120 seconds.' >&2
+            return 1
+          }
+          if IMAGE_TAG="$new_tag" docker compose pull writer &&
+             IMAGE_TAG="$new_tag" docker compose up -d --no-deps --no-build writer &&
+             wait_healthy &&
+             unchanged_runtime &&
+             test "$(docker inspect --format '{{.Config.Image}}' "$(docker compose ps -a -q writer)")" = "$repository:$new_tag"; then
+            docker inspect --format 'After: image={{.Config.Image}} id={{.Image}} health={{.State.Health.Status}}' "$(docker compose ps -a -q writer)"
+          else
+            echo 'Writer update failed; restoring previous image.' >&2
+            if IMAGE_TAG="$old_tag" docker compose up -d --no-deps --no-build writer && wait_healthy; then
+              docker inspect --format 'Rollback: image={{.Config.Image}} id={{.Image}} health={{.State.Health.Status}}' "$(docker compose ps -a -q writer)"
+            else
+              echo 'Writer rollback failed; manual recovery required.' >&2
+            fi
+            exit 1
+          fi
+          REMOTE
