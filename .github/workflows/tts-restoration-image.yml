@@ -12,6 +12,9 @@ permissions:
 jobs:
   image:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        binary: [collector, writer]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -31,6 +34,6 @@ jobs:
           platforms: linux/amd64
           provenance: false
           sbom: false
-          build-args: BINARY=collector
+          build-args: BINARY=${{ matrix.binary }}
           push: true
-          tags: ghcr.io/linkasu/linka.plays-metric-collector:sha-${{ github.sha }}
+          tags: ghcr.io/linkasu/linka.plays-metric-${{ matrix.binary }}:sha-${{ github.sha }}

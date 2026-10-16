@@ -12,12 +12,18 @@ on:
         required: false
         type: boolean
         default: false
+      apply_recovery:
+        description: Apply the approved two-task configuration and restart ClickHouse without deleting data
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   audit:
+    if: ${{ !inputs.apply_recovery }}
     runs-on: ubuntu-latest
     steps:
       - name: Configure SSH
@@ -37,7 +43,8 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
         run: |
-          ssh "$VPS_USER@$VPS_HOST" "cd '$VPS_DEPLOY_PATH' && docker compose exec -T clickhouse sh -s" <<'REMOTE'
+          printf -v remote_command 'cd %q && docker compose exec -T clickhouse sh -s' "$VPS_DEPLOY_PATH"
+          ssh "$VPS_USER@$VPS_HOST" "$remote_command" <<'REMOTE'
           set -eu
           query() {
             clickhouse-client --user "$CLICKHOUSE_ADMIN_USER" --password "$CLICKHOUSE_ADMIN_PASSWORD" --format TSVWithNames --query "$1"
@@ -64,12 +71,14 @@ jobs:
           VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
         run: |
           [[ "$TTS_APP_VERSION" =~ ^[a-f0-9]{40}$ ]]
+          printf -v remote_metadata 'cd %q && docker compose images writer && docker compose ps writer' "$VPS_DEPLOY_PATH"
+          printf -v remote_query 'cd %q && docker compose exec -T clickhouse sh -s -- %q' "$VPS_DEPLOY_PATH" "$TTS_APP_VERSION"
           ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=/tmp/tts-audit-%C \
             "$VPS_USER@$VPS_HOST" \
-            "cd '$VPS_DEPLOY_PATH' && docker compose images writer && docker compose ps writer"
+            "$remote_metadata"
           ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=/tmp/tts-audit-%C \
             "$VPS_USER@$VPS_HOST" \
-            "cd '$VPS_DEPLOY_PATH' && docker compose exec -T clickhouse sh -s -- '$TTS_APP_VERSION'" <<'REMOTE'
+            "$remote_query" <<'REMOTE'
           set -eu
           clickhouse-client --user "$CLICKHOUSE_ADMIN_USER" --password "$CLICKHOUSE_ADMIN_PASSWORD" \
             --format TSVWithNames \
@@ -82,9 +91,10 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
         run: |
+          printf -v remote_command 'cd %q && docker compose exec -T clickhouse sh -s' "$VPS_DEPLOY_PATH"
           ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=/tmp/tts-audit-%C \
             "$VPS_USER@$VPS_HOST" \
-            "cd '$VPS_DEPLOY_PATH' && docker compose exec -T clickhouse sh -s" <<'REMOTE'
+            "$remote_command" <<'REMOTE'
           set -eu
           query() {
             clickhouse-client --user "$CLICKHOUSE_ADMIN_USER" --password "$CLICKHOUSE_ADMIN_PASSWORD" \
@@ -97,3 +107,91 @@ jobs:
           query "SELECT database, table, count() AS merges, sum(memory_usage) AS merge_memory FROM system.merges GROUP BY database, table ORDER BY merge_memory DESC LIMIT 15"
           query "SELECT count() AS other_queries, sum(memory_usage) AS query_memory FROM system.processes WHERE query_id != currentQueryID()"
           REMOTE
+
+  recovery:
+    if: inputs.apply_recovery
+    runs-on: ubuntu-latest
+    environment: production-vps
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate the approved configuration
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse('deploy/clickhouse/config.d/resources.xml').getroot()
+          tasks = int(root.findtext('background_pool_size')) * int(root.findtext('background_merges_mutations_concurrency_ratio'))
+          assert tasks == 2
+          assert root.findtext('max_server_memory_usage_to_ram_ratio') == '0.85'
+          for node in root.find('merge_tree'):
+              assert 0 <= int(node.text) <= tasks
+          for name in ('trace_log', 'processors_profile_log', 'text_log', 'metric_log', 'asynchronous_metric_log', 'query_metric_log', 'latency_log'):
+              assert root.find(name).get('remove') == '1'
+          PY
+      - name: Verify startup with the production ClickHouse version
+        run: |
+          docker run -d --name clickhouse-recovery-check --memory 2g \
+            -e CLICKHOUSE_SKIP_USER_SETUP=1 \
+            -v "$PWD/deploy/clickhouse/config.d/resources.xml:/etc/clickhouse-server/config.d/resources.xml:ro" \
+            clickhouse/clickhouse-server:25.3.6.56-alpine
+          timeout 180 bash -c 'until docker exec clickhouse-recovery-check clickhouse-client --query "SELECT 1"; do sleep 3; done'
+          test "$(docker exec clickhouse-recovery-check clickhouse-client --query "SELECT value FROM system.server_settings WHERE name = 'background_pool_size'")" = 2
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          install -m 600 /dev/null ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf 'Host *\n  ControlMaster auto\n  ControlPersist 300\n  ControlPath /tmp/tts-recovery-%%C\n' > ~/.ssh/config
+      - name: Apply configuration and restart only ClickHouse
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+        run: |
+          remote_file="/tmp/linka-clickhouse-tts-$GITHUB_SHA.xml"
+          scp deploy/clickhouse/config.d/resources.xml "$VPS_USER@$VPS_HOST:$remote_file"
+          {
+          printf 'set -- %q %q\n' "$VPS_DEPLOY_PATH" "$remote_file"
+          cat <<'REMOTE'
+          set -euo pipefail
+          cd "$1"
+          file=deploy/clickhouse/config.d/resources.xml
+          backup="$file.before-tts-20261016"
+          test "$(sha256sum "$file" | cut -d' ' -f1)" = 99bdedb18c479bd5c4709431587510a17565507184c627c170a75819bd73969f
+          test ! -e "$backup"
+          cp -p "$file" "$backup"
+          rollback() {
+            trap - ERR
+            cp "$backup" "$file"
+            docker compose restart --timeout 60 clickhouse || true
+            echo 'Recovery failed; original configuration restored.' >&2
+            exit 1
+          }
+          trap rollback ERR
+          # Preserve the inode used by the existing read-only file bind mount.
+          cp "$2" "$file"
+          docker compose restart --timeout 60 clickhouse
+          container=$(docker compose ps -q clickhouse)
+          ready=false
+          for attempt in $(seq 1 60); do
+            if test "$(docker inspect --format '{{.State.Health.Status}}' "$container")" = healthy; then
+              ready=true
+              break
+            fi
+            sleep 4
+          done
+          if test "$ready" != true; then
+            false
+          fi
+          trap - ERR
+          rm -- "$2"
+          docker compose ps clickhouse
+          echo 'ClickHouse healthy; data volumes, schema, image and container limits unchanged.'
+          REMOTE
+          } | ssh "$VPS_USER@$VPS_HOST" bash -s
+      - name: Remove the isolated startup-check container
+        if: always()
+        run: docker rm -f clickhouse-recovery-check || true
