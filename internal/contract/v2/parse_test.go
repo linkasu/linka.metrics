@@ -70,6 +70,13 @@ func TestParseBatchEnforcesTTSRequestSources(t *testing.T) {
 	}
 }
 
+func TestParseBatchAcceptsTTSExporterWireFormat(t *testing.T) {
+	body := `{"schema_version":2,"batch_id":"c476ccf6-20c4-4d11-a16f-c502dfcf2753","scope":{"product":"linka-tts","subject_key":"` + testOpaqueKey + `"},"stream":"outcome","sent_at":"2026-07-18T12:00:00.000Z","records":[{"record_id":"c476ccf6-20c4-4d11-a16f-c502dfcf2753","occurred_at":"2026-07-18T12:00:00.000Z","kind":"request_completed","app_session_id":"c476ccf6-20c4-4d11-a16f-c502dfcf2753","app":{"version":"restore-probe","build":"server","platform":"linux","os_version":"server","locale":"other"},"result":"completed","source":"openai","count_bucket":"one","duration_bucket":"under_5s"}]}`
+	if _, err := ParseBatch([]byte(body), testNow); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestParseBatchEnforcesOutcomeFieldRules(t *testing.T) {
 	tests := []struct {
 		product   string

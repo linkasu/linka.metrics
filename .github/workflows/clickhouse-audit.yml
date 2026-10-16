@@ -61,6 +61,9 @@ jobs:
           [[ "$TTS_APP_VERSION" =~ ^[a-f0-9]{40}$ ]]
           ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=/tmp/tts-audit-%C \
             "$VPS_USER@$VPS_HOST" \
+            "cd '$VPS_DEPLOY_PATH' && docker compose images writer && docker compose ps writer"
+          ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=/tmp/tts-audit-%C \
+            "$VPS_USER@$VPS_HOST" \
             "cd '$VPS_DEPLOY_PATH' && docker compose exec -T clickhouse sh -s -- '$TTS_APP_VERSION'" <<'REMOTE'
           set -eu
           clickhouse-client --user "$CLICKHOUSE_ADMIN_USER" --password "$CLICKHOUSE_ADMIN_PASSWORD" \
