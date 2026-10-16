@@ -3,6 +3,7 @@ name: TTS restoration image
 on:
   push:
     branches: [fix/tts-return-openai-metrics-20261016]
+    paths-ignore: [.github/workflows/clickhouse-audit.yml]
 
 permissions:
   contents: read

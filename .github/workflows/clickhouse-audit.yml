@@ -7,6 +7,11 @@ on:
         description: Optional exact TTS commit SHA for a focused read-only outcome check
         required: false
         type: string
+      resources_only:
+        description: Read only ClickHouse memory, merge and table-size diagnostics
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,7 +31,7 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
       - name: Query aggregate telemetry state
-        if: inputs.tts_app_version == ''
+        if: inputs.tts_app_version == '' && !inputs.resources_only
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
@@ -51,7 +56,7 @@ jobs:
           query "SELECT active, count() AS suppressions FROM linka_metric.privacy_suppressions_v2 FINAL GROUP BY active ORDER BY active DESC"
           REMOTE
       - name: Verify TTS release outcomes
-        if: inputs.tts_app_version != ''
+        if: inputs.tts_app_version != '' && !inputs.resources_only
         env:
           TTS_APP_VERSION: ${{ inputs.tts_app_version }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -69,4 +74,26 @@ jobs:
           clickhouse-client --user "$CLICKHOUSE_ADMIN_USER" --password "$CLICKHOUSE_ADMIN_PASSWORD" \
             --format TSVWithNames \
             --query "SELECT source, result, count() AS events FROM linka_metric.product_outcomes_v2 FINAL WHERE product = 'linka-tts' AND kind = 'request_completed' AND app_version = '$1' GROUP BY source, result ORDER BY source, result"
+          REMOTE
+      - name: Inspect ClickHouse resource pressure
+        if: inputs.resources_only
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+        run: |
+          ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=/tmp/tts-audit-%C \
+            "$VPS_USER@$VPS_HOST" \
+            "cd '$VPS_DEPLOY_PATH' && docker compose exec -T clickhouse sh -s" <<'REMOTE'
+          set -eu
+          query() {
+            clickhouse-client --user "$CLICKHOUSE_ADMIN_USER" --password "$CLICKHOUSE_ADMIN_PASSWORD" \
+              --format TSVWithNames --max_threads 1 --max_memory_usage 67108864 --query "$1"
+          }
+          query "SELECT metric, value FROM system.metrics WHERE metric IN ('MemoryTracking', 'BackgroundMergesAndMutationsPoolTask', 'Query') ORDER BY metric"
+          query "SELECT metric, value FROM system.asynchronous_metrics WHERE metric IN ('MemoryResident', 'MemoryVirtual', 'OSMemoryAvailable', 'OSMemoryTotal', 'jemalloc.allocated', 'jemalloc.resident') ORDER BY metric"
+          query "SELECT name, value FROM system.server_settings WHERE name IN ('max_server_memory_usage', 'max_server_memory_usage_to_ram_ratio', 'background_pool_size', 'background_merges_mutations_concurrency_ratio', 'mark_cache_size', 'uncompressed_cache_size') ORDER BY name"
+          query "SELECT database, table, count() AS parts, sum(bytes_on_disk) AS bytes, sum(rows) AS rows FROM system.parts WHERE active GROUP BY database, table ORDER BY bytes DESC LIMIT 15"
+          query "SELECT database, table, count() AS merges, sum(memory_usage) AS merge_memory FROM system.merges GROUP BY database, table ORDER BY merge_memory DESC LIMIT 15"
+          query "SELECT count() AS other_queries, sum(memory_usage) AS query_memory FROM system.processes WHERE query_id != currentQueryID()"
           REMOTE
