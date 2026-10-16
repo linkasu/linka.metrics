@@ -87,7 +87,7 @@ jobs:
           set -eu
           clickhouse-client --user "$CLICKHOUSE_ADMIN_USER" --password "$CLICKHOUSE_ADMIN_PASSWORD" \
             --format TSVWithNames \
-            --query "SELECT source, result, count() AS events FROM linka_metric.product_outcomes_v2 FINAL WHERE product = 'linka-tts' AND kind = 'request_completed' AND app_version = '$1' GROUP BY source, result ORDER BY source, result"
+            --query "SELECT source, result, ifNull(failure_code, '') AS failure_code, count() AS events FROM linka_metric.product_outcomes_v2 FINAL WHERE product = 'linka-tts' AND kind = 'request_completed' AND app_version = '$1' GROUP BY source, result, failure_code ORDER BY source, result, failure_code"
           REMOTE
       - name: Inspect ClickHouse resource pressure
         if: inputs.resources_only
