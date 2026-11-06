@@ -187,7 +187,8 @@ func ParsePrivacyRequest(data []byte, now time.Time) (ValidatedPrivacyRequest, e
 	if err != nil {
 		return ValidatedPrivacyRequest{}, fmt.Errorf("requested_at: %w", err)
 	}
-	if requestedAt.Before(now.Add(-24*time.Hour)) || requestedAt.After(now.Add(5*time.Minute)) {
+	// Opt-out must survive durable delivery retries with its original requested_at.
+	if (request.Action == PrivacyDelete && requestedAt.Before(now.Add(-24*time.Hour))) || requestedAt.After(now.Add(5*time.Minute)) {
 		return ValidatedPrivacyRequest{}, errors.New("requested_at is outside the allowed range")
 	}
 	return ValidatedPrivacyRequest{PrivacyRequest: request, ProductKey: spec.OpaqueKey, RequestedAtTime: requestedAt}, nil

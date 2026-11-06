@@ -61,7 +61,7 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
         run: |
-          rsync -az --delete \
+          rsync -az \
             --exclude .git \
             --exclude .env \
             --exclude data \
