@@ -75,3 +75,43 @@ func TestRetentionActivationPreservesEnvironmentAndBackup(t *testing.T) {
 		}
 	}
 }
+
+func TestPreflightTracksMigrationFiles(t *testing.T) {
+	script, err := filepath.Abs("preflight.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "migrations"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"001_database.sql", "002_tables.sql", "017_v2_retention.sql"} {
+		if err := os.WriteFile(filepath.Join(dir, "migrations", name), []byte("SELECT 1;"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	adapter := "#!/bin/sh\nfor argument do last=$argument; done\nprintf '%s' \"$last\" > \"$CAPTURED_MANIFEST\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(adapter), 0700); err != nil {
+		t.Fatal(err)
+	}
+	captured := filepath.Join(dir, "captured")
+	for _, want := range []string{"1\n2\n17", "1\n2\n17\n99"} {
+		command := exec.Command("sh", script)
+		command.Dir = dir
+		command.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "CAPTURED_MANIFEST="+captured)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("preflight failed: %v %s", err, output)
+		}
+		got, err := os.ReadFile(captured)
+		if err != nil || string(got) != want {
+			t.Fatalf("migration manifest=%q, want %q: %v", got, want, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "migrations", "099_future.sql"), []byte("SELECT 1;"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
