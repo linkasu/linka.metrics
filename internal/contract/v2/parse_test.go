@@ -43,6 +43,40 @@ func TestParseBatchAcceptsRegisteredOutcomeAndRejectsUnsafeValues(t *testing.T) 
 	}
 }
 
+func TestParseBatchEnforcesTTSRequestSources(t *testing.T) {
+	for _, source := range []string{"openai", "yandex", "sber", "local"} {
+		t.Run(source, func(t *testing.T) {
+			body := outcomeBatch("linka-tts", "request_completed", `"result":"completed"`, fmt.Sprintf(`"source":%q`, source), `"count_bucket":"one"`, `"duration_bucket":"under_5s"`)
+			batch, err := ParseBatch([]byte(body), testNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(batch.OutcomeRecords) != 1 || batch.OutcomeRecords[0].Source == nil || *batch.OutcomeRecords[0].Source != source {
+				t.Fatalf("unexpected outcome records: %+v", batch.OutcomeRecords)
+			}
+		})
+	}
+	for _, sourceField := range []string{`"source":"unknown"`, `"source":""`, ""} {
+		t.Run("reject/"+sourceField, func(t *testing.T) {
+			fields := []string{`"result":"completed"`, `"count_bucket":"one"`, `"duration_bucket":"under_5s"`}
+			if sourceField != "" {
+				fields = append(fields, sourceField)
+			}
+			body := outcomeBatch("linka-tts", "request_completed", fields...)
+			if _, err := ParseBatch([]byte(body), testNow); err == nil {
+				t.Fatalf("accepted invalid TTS source field %q", sourceField)
+			}
+		})
+	}
+}
+
+func TestParseBatchAcceptsTTSExporterWireFormat(t *testing.T) {
+	body := `{"schema_version":2,"batch_id":"c476ccf6-20c4-4d11-a16f-c502dfcf2753","scope":{"product":"linka-tts","subject_key":"` + testOpaqueKey + `"},"stream":"outcome","sent_at":"2026-07-18T12:00:00.000Z","records":[{"record_id":"c476ccf6-20c4-4d11-a16f-c502dfcf2753","occurred_at":"2026-07-18T12:00:00.000Z","kind":"request_completed","app_session_id":"c476ccf6-20c4-4d11-a16f-c502dfcf2753","app":{"version":"restore-probe","build":"server","platform":"linux","os_version":"server","locale":"other"},"result":"completed","source":"openai","count_bucket":"one","duration_bucket":"under_5s"}]}`
+	if _, err := ParseBatch([]byte(body), testNow); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestParseBatchEnforcesOutcomeFieldRules(t *testing.T) {
 	tests := []struct {
 		product   string
@@ -252,6 +286,45 @@ func TestParsePrivacyRequestAndIdempotency(t *testing.T) {
 	}
 	if err := ValidateIdempotencyKey("20000000-0000-4000-8000-000000000002", request.RequestID); err == nil {
 		t.Fatal("mismatched idempotency key was accepted")
+	}
+}
+
+func TestParsePrivacyRequestAcceptsDurableOptOut(t *testing.T) {
+	const requestedAt = "2026-06-18T12:00:00.123456789Z"
+	body := fmt.Sprintf(`{"schema_version":2,"request_id":"10000000-0000-4000-8000-000000000001","scope":{"product":"linka-plays","subject_key":%q},"action":"opt_out","requested_at":%q}`, testOpaqueKey, requestedAt)
+	request, err := ParsePrivacyRequest([]byte(body), testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.RequestedAt != requestedAt {
+		t.Fatalf("requested_at = %q, want %q", request.RequestedAt, requestedAt)
+	}
+	want := time.Date(2026, 6, 18, 12, 0, 0, 123*int(time.Millisecond), time.UTC)
+	if !request.RequestedAtTime.Equal(want) {
+		t.Fatalf("requested_at time = %s, want %s", request.RequestedAtTime, want)
+	}
+}
+
+func TestParsePrivacyRequestRejectsInvalidDurableDelivery(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		action      string
+		requestedAt string
+	}{
+		{"future opt-out", "opt_out", "2026-07-18T12:05:00.001Z"},
+		{"before storage range", "opt_out", "2019-12-31T23:59:59Z"},
+		{"after storage range", "opt_out", "2100-01-01T00:00:00Z"},
+		{"bad timestamp", "opt_out", "not-a-timestamp"},
+		{"unknown action", "unknown", "2026-06-18T12:00:00Z"},
+		{"old delete", "delete", "2026-06-18T12:00:00Z"},
+		{"delete past 24 hours", "delete", "2026-07-17T11:59:59.999Z"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"schema_version":2,"request_id":"10000000-0000-4000-8000-000000000001","scope":{"product":"linka-plays","subject_key":%q},"action":%q,"requested_at":%q}`, testOpaqueKey, test.action, test.requestedAt)
+			if _, err := ParsePrivacyRequest([]byte(body), testNow); err == nil {
+				t.Fatal("invalid privacy request was accepted")
+			}
+		})
 	}
 }
 

@@ -153,7 +153,7 @@ var registry = map[ID]Spec{
 		streams:      streamSet(StreamProduct, StreamOutcome),
 		productKinds: stringSet("tts_generated"),
 		outcomeRules: outcomeRules(
-			"request_completed", OutcomeRule{Required: requiredOutcomeFields(OutcomeResult, OutcomeSource, OutcomeCountBucket, OutcomeDurationBucket), Results: []string{"completed", "failed", "cancelled"}, Sources: []string{"yandex", "sber", "local"}, CountBuckets: countBuckets, DurationBuckets: durationBuckets, FailureCodes: ttsFailureCodes},
+			"request_completed", OutcomeRule{Required: requiredOutcomeFields(OutcomeResult, OutcomeSource, OutcomeCountBucket, OutcomeDurationBucket), Results: []string{"completed", "failed", "cancelled"}, Sources: []string{"yandex", "sber", "local", "openai"}, CountBuckets: countBuckets, DurationBuckets: durationBuckets, FailureCodes: ttsFailureCodes},
 			"cache_operation", OutcomeRule{Required: requiredOutcomeFields(OutcomeResult), Results: []string{"hit", "miss", "evicted"}},
 		),
 	},
