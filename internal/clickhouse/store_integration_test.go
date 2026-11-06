@@ -243,13 +243,13 @@ func TestV2BatchReservationResumesSameBodyAndRejectsChangedBodyIntegration(t *te
 	}
 	bodySHA := v2.BodySHA256(body)
 	reservedAt := now.UTC().Truncate(time.Millisecond)
-	if err := store.insertBatchLedgerV2(ctx, batch, bodySHA, reservedAt, "reserved"); err != nil {
+	if err := store.insertBatchLedgerV2(ctx, batch, bodySHA, reservedAt, "reserved", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.registerRecordsV2(ctx, batch, bodySHA, reservedAt); err != nil {
+	if err := store.registerRecordsV2(ctx, batch, bodySHA, reservedAt, 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.insertCommonV2(ctx, batch, reservedAt); err != nil {
+	if err := store.insertCommonV2(ctx, batch, reservedAt, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -265,7 +265,7 @@ func TestV2BatchReservationResumesSameBodyAndRejectsChangedBodyIntegration(t *te
 	if err != nil || result.Replayed || result.Count != 1 {
 		t.Fatalf("same-body resume result=%+v err=%v", result, err)
 	}
-	_, status, _, exists, err := store.batchLedgerV2(ctx, string(batch.Header.Scope.Product), batchID)
+	_, status, _, _, exists, err := store.batchLedgerV2(ctx, string(batch.Header.Scope.Product), batchID)
 	if err != nil || !exists || status != "completed" {
 		t.Fatalf("latest batch ledger status=%s exists=%v err=%v", status, exists, err)
 	}

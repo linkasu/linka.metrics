@@ -7,7 +7,7 @@
 Перед первым запуском:
 
 1. Создайте отдельный env-файл с правами `0600` вне Git.
-2. Оставьте все `RETENTION_V2_*` пустыми, пока сроки не утверждены.
+2. Заполните все девять `RETENTION_V2_*`: `4320h` для raw events (включая outcome), batches и registry, `26280h` для завершённых privacy-записей. Production отвергает пустые durations; development может оставлять новые expiry NULL. Активные opt-out и незавершённые privacy jobs не истекают.
 3. Запустите ClickHouse и примените migrations командой `docker compose --profile migration run --rm migrate`.
 4. Выполните `deploy/clickhouse/preflight.sh`, затем примените least-privilege grants через `deploy/clickhouse/configure-v2-users.sh`.
 5. Запустите writer, collector и только затем профиль `privacy`.
@@ -21,4 +21,4 @@ Runner не использует Terraform и не читает state. Terraform
 
 ## Runtime gates
 
-Не включайте active-active writer/worker до появления distributed claim lock. Production обязан использовать HTTPS Identity JWKS с exact issuer/audience; legacy `/v2/tokens` разрешён только при `DEPLOYMENT_ENVIRONMENT=staging` и `ALLOW_LEGACY_PRODUCT_TOKENS=true`. Не активируйте SQL TTL только потому, что заполнен `expires_at`: это отдельное юридическое и operational решение.
+Не включайте active-active writer/worker до появления distributed claim lock. Production обязан использовать HTTPS Identity JWKS с exact issuer/audience; legacy `/v2/tokens` разрешён только при `DEPLOYMENT_ENVIRONMENT=staging` и `ALLOW_LEGACY_PRODUCT_TOKENS=true`. SQL TTL активен с migration `017`; исторические NULL остаются без expiry. До миграции выполните `sh deploy/clickhouse/backup-retention.sh <release-id>`: backup должен успешно восстановиться в временную БД. При откате binary не запускайте старый migration runner поверх ledger 017; новые nullable колонки совместимы со старым writer, активные opt-out защищены SQL независимо от версии binary.

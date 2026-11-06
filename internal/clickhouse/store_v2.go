@@ -17,7 +17,7 @@ func (s *Store) InsertV2(ctx context.Context, batch v2.ValidatedBatch, bodySHA s
 	s.v2Mu.Lock()
 	defer s.v2Mu.Unlock()
 
-	existingSHA, status, reservedAt, exists, err := s.batchLedgerV2(ctx, string(batch.Header.Scope.Product), batch.Header.BatchID)
+	existingSHA, status, reservedAt, batchExpiry, exists, err := s.batchLedgerV2(ctx, string(batch.Header.Scope.Product), batch.Header.BatchID)
 	if err != nil {
 		return v2.IngestResult{}, err
 	}
@@ -41,26 +41,32 @@ func (s *Store) InsertV2(ctx context.Context, batch v2.ValidatedBatch, bodySHA s
 	}
 
 	ingestedAt := reservedAt
+	retention := s.retention
+	if exists && batchExpiry == nil {
+		// Resuming pre-TTL work must not backfill expiry onto historical rows.
+		retention = Retention{}
+	}
 	if !exists {
 		ingestedAt = s.now().UTC().Truncate(time.Millisecond)
-		if err := s.insertBatchLedgerV2(ctx, batch, bodySHA, ingestedAt, "reserved"); err != nil {
+		batchExpiry = expiresAt(ingestedAt, retention.IngestBatches)
+		if err := s.insertBatchLedgerV2(ctx, batch, bodySHA, ingestedAt, "reserved", batchExpiry); err != nil {
 			return v2.IngestResult{}, err
 		}
 	}
-	if err := s.registerRecordsV2(ctx, batch, bodySHA, ingestedAt); err != nil {
+	if err := s.registerRecordsV2(ctx, batch, bodySHA, ingestedAt, retention.Registry); err != nil {
 		return v2.IngestResult{}, err
 	}
 	switch batch.Header.Stream {
 	case "common":
-		err = s.insertCommonV2(ctx, batch, ingestedAt)
+		err = s.insertCommonV2(ctx, batch, ingestedAt, retention.Common)
 	case "technical":
-		err = s.insertTechnicalV2(ctx, batch, ingestedAt)
+		err = s.insertTechnicalV2(ctx, batch, ingestedAt, retention.Technical)
 	case "plays":
-		err = s.insertPlaysV2(ctx, batch, ingestedAt)
+		err = s.insertPlaysV2(ctx, batch, ingestedAt, retention.Plays)
 	case "product":
-		err = s.insertProductV2(ctx, batch, ingestedAt)
+		err = s.insertProductV2(ctx, batch, ingestedAt, retention.Product)
 	case "outcome":
-		err = s.insertOutcomeV2(ctx, batch, ingestedAt)
+		err = s.insertOutcomeV2(ctx, batch, ingestedAt, retention.Outcome)
 	default:
 		err = errors.New("unsupported validated stream")
 	}
@@ -71,13 +77,13 @@ func (s *Store) InsertV2(ctx context.Context, batch v2.ValidatedBatch, bodySHA s
 	if !completedAt.After(ingestedAt) {
 		completedAt = ingestedAt.Add(time.Millisecond)
 	}
-	if err := s.insertBatchLedgerV2(ctx, batch, bodySHA, completedAt, "completed"); err != nil {
+	if err := s.insertBatchLedgerV2(ctx, batch, bodySHA, completedAt, "completed", batchExpiry); err != nil {
 		return v2.IngestResult{}, err
 	}
 	return v2.IngestResult{Count: batch.RecordCount()}, nil
 }
 
-func (s *Store) registerRecordsV2(ctx context.Context, batch v2.ValidatedBatch, bodySHA string, registeredAt time.Time) error {
+func (s *Store) registerRecordsV2(ctx context.Context, batch v2.ValidatedBatch, bodySHA string, registeredAt time.Time, retention time.Duration) error {
 	recordIDs := make([]uuid.UUID, 0, batch.RecordCount())
 	for _, record := range batch.CommonRecords {
 		recordIDs = append(recordIDs, uuid.MustParse(record.RecordID))
@@ -120,14 +126,15 @@ func (s *Store) registerRecordsV2(ctx context.Context, batch v2.ValidatedBatch, 
 	}
 	registry, err := s.connection.PrepareBatch(ctx, `INSERT INTO record_registry_v2 (
 		product, record_id, batch_id, stream, body_sha256, registered_at,
-		product_key, subject_key, person_key, org_key
+		product_key, subject_key, person_key, org_key, expires_at
 	)`)
 	if err != nil {
 		return fmt.Errorf("prepare v2 record registry: %w", err)
 	}
 	for _, recordID := range recordIDs {
 		if err := registry.Append(string(batch.Header.Scope.Product), recordID, batchID, string(batch.Header.Stream), bodySHA, registeredAt,
-			&batch.ProductKey, &batch.Header.Scope.SubjectKey, batch.Header.Scope.PersonKey, batch.Header.Scope.OrgKey); err != nil {
+			&batch.ProductKey, &batch.Header.Scope.SubjectKey, batch.Header.Scope.PersonKey, batch.Header.Scope.OrgKey,
+			expiresAt(registeredAt, retention)); err != nil {
 			return fmt.Errorf("append v2 record registry: %w", err)
 		}
 	}
@@ -137,22 +144,23 @@ func (s *Store) registerRecordsV2(ctx context.Context, batch v2.ValidatedBatch, 
 	return nil
 }
 
-func (s *Store) batchLedgerV2(ctx context.Context, productID, batchID string) (string, string, time.Time, bool, error) {
+func (s *Store) batchLedgerV2(ctx context.Context, productID, batchID string) (string, string, time.Time, *time.Time, bool, error) {
 	var bodySHA, status string
 	var ingestedAt time.Time
+	var expiry *time.Time
 	err := s.connection.QueryRow(ctx, `
-		SELECT body_sha256, status, ingested_at
+		SELECT body_sha256, status, ingested_at, expires_at
 		FROM ingest_batches_v2
 		WHERE product = ? AND batch_id = ?
 		ORDER BY ingested_at DESC
-		LIMIT 1`, productID, uuid.MustParse(batchID)).Scan(&bodySHA, &status, &ingestedAt)
+		LIMIT 1`, productID, uuid.MustParse(batchID)).Scan(&bodySHA, &status, &ingestedAt, &expiry)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", time.Time{}, false, nil
+		return "", "", time.Time{}, nil, false, nil
 	}
 	if err != nil {
-		return "", "", time.Time{}, false, fmt.Errorf("query v2 batch ledger: %w", err)
+		return "", "", time.Time{}, nil, false, fmt.Errorf("query v2 batch ledger: %w", err)
 	}
-	return bodySHA, status, ingestedAt, true, nil
+	return bodySHA, status, ingestedAt, expiry, true, nil
 }
 
 func (s *Store) isSuppressed(ctx context.Context, scope v2.Scope, productKey string) (bool, error) {
@@ -180,14 +188,14 @@ func (s *Store) isSuppressed(ctx context.Context, scope v2.Scope, productKey str
 	return suppressed == 1, nil
 }
 
-func (s *Store) insertBatchLedgerV2(ctx context.Context, batch v2.ValidatedBatch, bodySHA string, ingestedAt time.Time, status string) error {
+func (s *Store) insertBatchLedgerV2(ctx context.Context, batch v2.ValidatedBatch, bodySHA string, ingestedAt time.Time, status string, expiry *time.Time) error {
 	err := s.connection.Exec(ctx, `INSERT INTO ingest_batches_v2 (
 		batch_id, idempotency_key, product, product_key, subject_key, person_key, org_key, stream,
 		body_sha256, record_count, sent_at, ingested_at, expires_at, status
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		uuid.MustParse(batch.Header.BatchID), uuid.MustParse(batch.Header.BatchID), string(batch.Header.Scope.Product), &batch.ProductKey,
 		batch.Header.Scope.SubjectKey, batch.Header.Scope.PersonKey, batch.Header.Scope.OrgKey, string(batch.Header.Stream), bodySHA,
-		uint16(batch.RecordCount()), batch.SentAtTime, ingestedAt, expiresAt(ingestedAt, s.retention.IngestBatches), status,
+		uint16(batch.RecordCount()), sqlTime(batch.SentAtTime), sqlTime(ingestedAt), sqlNullableTime(expiry), status,
 	)
 	if err != nil {
 		return fmt.Errorf("insert v2 batch ledger: %w", err)
@@ -195,7 +203,7 @@ func (s *Store) insertBatchLedgerV2(ctx context.Context, batch v2.ValidatedBatch
 	return nil
 }
 
-func (s *Store) insertCommonV2(ctx context.Context, input v2.ValidatedBatch, ingestedAt time.Time) error {
+func (s *Store) insertCommonV2(ctx context.Context, input v2.ValidatedBatch, ingestedAt time.Time, retention time.Duration) error {
 	batch, err := s.connection.PrepareBatch(ctx, `INSERT INTO common_events_v2 (
 		product, product_key, subject_key, person_key, org_key, batch_id, record_id, occurred_at, kind,
 		app_session_id, app_version, app_build, platform, os_version, locale, page, mode, ingested_at, expires_at
@@ -208,7 +216,7 @@ func (s *Store) insertCommonV2(ctx context.Context, input v2.ValidatedBatch, ing
 			string(input.Header.Scope.Product), &input.ProductKey, input.Header.Scope.SubjectKey, input.Header.Scope.PersonKey, input.Header.Scope.OrgKey,
 			uuid.MustParse(input.Header.BatchID), uuid.MustParse(record.RecordID), record.OccurredAtTime, record.Kind, uuid.MustParse(record.AppSessionID),
 			record.App.Version, record.App.Build, record.App.Platform, record.App.OSVersion, record.App.Locale, record.Page, record.Mode,
-			ingestedAt, expiresAt(ingestedAt, s.retention.Common),
+			ingestedAt, expiresAt(ingestedAt, retention),
 		); err != nil {
 			return fmt.Errorf("append common v2 record: %w", err)
 		}
@@ -219,7 +227,7 @@ func (s *Store) insertCommonV2(ctx context.Context, input v2.ValidatedBatch, ing
 	return nil
 }
 
-func (s *Store) insertTechnicalV2(ctx context.Context, input v2.ValidatedBatch, ingestedAt time.Time) error {
+func (s *Store) insertTechnicalV2(ctx context.Context, input v2.ValidatedBatch, ingestedAt time.Time, retention time.Duration) error {
 	batch, err := s.connection.PrepareBatch(ctx, `INSERT INTO technical_events_v2 (
 		product, product_key, subject_key, person_key, org_key, batch_id, record_id, occurred_at, kind,
 		app_session_id, app_version, app_build, platform, os_version, locale, component, state,
@@ -233,7 +241,7 @@ func (s *Store) insertTechnicalV2(ctx context.Context, input v2.ValidatedBatch, 
 			string(input.Header.Scope.Product), &input.ProductKey, input.Header.Scope.SubjectKey, input.Header.Scope.PersonKey, input.Header.Scope.OrgKey,
 			uuid.MustParse(input.Header.BatchID), uuid.MustParse(record.RecordID), record.OccurredAtTime, record.Kind, uuid.MustParse(record.AppSessionID),
 			record.App.Version, record.App.Build, record.App.Platform, record.App.OSVersion, record.App.Locale, record.Component, record.State,
-			record.ErrorFingerprint, record.DroppedCount, record.DropReason, ingestedAt, expiresAt(ingestedAt, s.retention.Technical),
+			record.ErrorFingerprint, record.DroppedCount, record.DropReason, ingestedAt, expiresAt(ingestedAt, retention),
 		); err != nil {
 			return fmt.Errorf("append technical v2 record: %w", err)
 		}
@@ -244,7 +252,7 @@ func (s *Store) insertTechnicalV2(ctx context.Context, input v2.ValidatedBatch, 
 	return nil
 }
 
-func (s *Store) insertPlaysV2(ctx context.Context, input v2.ValidatedBatch, ingestedAt time.Time) error {
+func (s *Store) insertPlaysV2(ctx context.Context, input v2.ValidatedBatch, ingestedAt time.Time, retention time.Duration) error {
 	batch, err := s.connection.PrepareBatch(ctx, `INSERT INTO plays_events_v2 (
 		product, product_key, subject_key, person_key, org_key, batch_id, record_id, occurred_at, kind,
 		app_session_id, game_session_id, app_version, app_build, platform, os_version, locale, game_id,
@@ -260,7 +268,7 @@ func (s *Store) insertPlaysV2(ctx context.Context, input v2.ValidatedBatch, inge
 			uuid.MustParse(input.Header.BatchID), uuid.MustParse(record.RecordID), record.OccurredAtTime, record.Kind, uuid.MustParse(record.AppSessionID),
 			uuid.MustParse(record.GameSessionID), record.App.Version, record.App.Build, record.App.Platform, record.App.OSVersion, record.App.Locale,
 			record.GameID, record.GameCategory, record.InputMethod, record.LevelIndex, record.Outcome, record.DurationMS, record.SuccessCount,
-			record.MistakeCount, record.HintCount, record.ValidGazeRatio, ingestedAt, expiresAt(ingestedAt, s.retention.Plays),
+			record.MistakeCount, record.HintCount, record.ValidGazeRatio, ingestedAt, expiresAt(ingestedAt, retention),
 		); err != nil {
 			return fmt.Errorf("append plays v2 record: %w", err)
 		}
@@ -271,7 +279,7 @@ func (s *Store) insertPlaysV2(ctx context.Context, input v2.ValidatedBatch, inge
 	return nil
 }
 
-func (s *Store) insertProductV2(ctx context.Context, input v2.ValidatedBatch, ingestedAt time.Time) error {
+func (s *Store) insertProductV2(ctx context.Context, input v2.ValidatedBatch, ingestedAt time.Time, retention time.Duration) error {
 	batch, err := s.connection.PrepareBatch(ctx, `INSERT INTO product_events_v2 (
 		product, product_key, subject_key, person_key, org_key, batch_id, record_id, occurred_at, kind,
 		app_session_id, app_version, app_build, platform, os_version, locale, ingested_at, expires_at
@@ -284,7 +292,7 @@ func (s *Store) insertProductV2(ctx context.Context, input v2.ValidatedBatch, in
 			string(input.Header.Scope.Product), &input.ProductKey, input.Header.Scope.SubjectKey, input.Header.Scope.PersonKey, input.Header.Scope.OrgKey,
 			uuid.MustParse(input.Header.BatchID), uuid.MustParse(record.RecordID), record.OccurredAtTime, record.Kind, uuid.MustParse(record.AppSessionID),
 			record.App.Version, record.App.Build, record.App.Platform, record.App.OSVersion, record.App.Locale,
-			ingestedAt, expiresAt(ingestedAt, s.retention.Product),
+			ingestedAt, expiresAt(ingestedAt, retention),
 		); err != nil {
 			return fmt.Errorf("append product v2 record: %w", err)
 		}
@@ -295,7 +303,7 @@ func (s *Store) insertProductV2(ctx context.Context, input v2.ValidatedBatch, in
 	return nil
 }
 
-func (s *Store) insertOutcomeV2(ctx context.Context, input v2.ValidatedBatch, ingestedAt time.Time) error {
+func (s *Store) insertOutcomeV2(ctx context.Context, input v2.ValidatedBatch, ingestedAt time.Time, retention time.Duration) error {
 	batch, err := s.connection.PrepareBatch(ctx, `INSERT INTO product_outcomes_v2 (
 		product, product_key, subject_key, person_key, org_key, batch_id, record_id, occurred_at, kind,
 		app_session_id, app_version, app_build, platform, os_version, locale, result, source, mode,
@@ -309,7 +317,7 @@ func (s *Store) insertOutcomeV2(ctx context.Context, input v2.ValidatedBatch, in
 			string(input.Header.Scope.Product), &input.ProductKey, input.Header.Scope.SubjectKey, input.Header.Scope.PersonKey, input.Header.Scope.OrgKey,
 			uuid.MustParse(input.Header.BatchID), uuid.MustParse(record.RecordID), record.OccurredAtTime, record.Kind, uuid.MustParse(record.AppSessionID),
 			record.App.Version, record.App.Build, record.App.Platform, record.App.OSVersion, record.App.Locale, record.Result, record.Source, record.Mode,
-			record.CountBucket, record.DurationBucket, record.FailureCode, ingestedAt, expiresAt(ingestedAt, s.retention.Outcome),
+			record.CountBucket, record.DurationBucket, record.FailureCode, ingestedAt, expiresAt(ingestedAt, retention),
 		); err != nil {
 			return fmt.Errorf("append outcome v2 record: %w", err)
 		}
@@ -326,6 +334,18 @@ func expiresAt(from time.Time, retention time.Duration) *time.Time {
 	}
 	value := from.Add(retention)
 	return &value
+}
+
+// SQL binding otherwise stringifies *time.Time and drops precision on time.Time.
+func sqlTime(value time.Time) string {
+	return value.UTC().Format("2006-01-02 15:04:05.000")
+}
+
+func sqlNullableTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return sqlTime(*value)
 }
 
 func stringValue(value *string) string {

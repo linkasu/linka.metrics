@@ -1,6 +1,9 @@
 .git
 .github
 .env
+.env.bak
+.env.before-retention-*
+.env.retention.*
 data
 infra
 docs

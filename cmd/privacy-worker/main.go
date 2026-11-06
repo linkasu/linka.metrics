@@ -29,10 +29,14 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	retentionConfig, err := app.LoadRetention()
+	if err != nil {
+		return err
+	}
 	store, err := metricclickhouse.Open(metricclickhouse.Config{
 		Addresses: strings.Split(envDefault("CLICKHOUSE_ADDRS", "clickhouse:9000"), ","),
 		Database:  envDefault("CLICKHOUSE_DATABASE", "linka_metric"), Username: envDefault("CLICKHOUSE_USER", "metric_privacy"),
-		Password: password, Secure: os.Getenv("CLICKHOUSE_SECURE") == "true",
+		Password: password, Secure: os.Getenv("CLICKHOUSE_SECURE") == "true", Retention: retentionConfig,
 	})
 	if err != nil {
 		return err

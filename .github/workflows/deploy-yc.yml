@@ -20,11 +20,37 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+concurrency:
+  group: metrics-production-yc
+  cancel-in-progress: false
+
 jobs:
+  license-scope:
+    name: Licensing publication guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      deploy: ${{ steps.scope.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Test licensing guard
+        run: python3 .github/scripts/licensing-deployment-guard.py --self-test
+      - id: scope
+        run: python3 .github/scripts/licensing-deployment-guard.py
+
   deploy:
+    needs: [license-scope]
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      needs.license-scope.outputs.deploy == 'true' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      )
     runs-on: ubuntu-latest
     environment: production-yc
     env:
@@ -37,7 +63,7 @@ jobs:
       CORS_ALLOWED_ORIGINS: ${{ vars.CORS_ALLOWED_ORIGINS }}
       COLLECTOR_PUBLIC_URL: ${{ vars.COLLECTOR_PUBLIC_URL }}
       TTS_OUTCOME_HMAC_ACTIVE_KEY_ID: ${{ vars.TTS_OUTCOME_HMAC_ACTIVE_KEY_ID }}
-      TTS_OUTCOME_SUBJECT_KEY: ${{ vars.TTS_OUTCOME_SUBJECT_KEY }}
+      TTS_OUTCOME_SUBJECT_KEY: ${{ secrets.INGRESS_TTS_OUTCOME_SUBJECT_KEY }}
       YC_TTS_OUTCOME_LOCKBOX_SECRET_ID: ${{ vars.YC_TTS_OUTCOME_LOCKBOX_SECRET_ID }}
       YC_TTS_OUTCOME_LOCKBOX_SECRET_VERSION_ID: ${{ vars.YC_TTS_OUTCOME_LOCKBOX_SECRET_VERSION_ID }}
       DONATION_INGEST_HMAC_ACTIVE_KEY_ID: ${{ vars.DONATION_INGEST_HMAC_ACTIVE_KEY_ID }}
@@ -107,8 +133,32 @@ jobs:
           container_id="$("$HOME/yandex-cloud/bin/yc" serverless container get \
             --name linka-plays-metric-collector --format json | jq -er .id)"
           revision_id="$("$HOME/yandex-cloud/bin/yc" serverless container revision list \
-            --container-id "$container_id" --format json | jq -er 'sort_by(.created_at) | last | .id')"
+            --container-id "$container_id" --format json | jq -er 'map(select(.status == "ACTIVE")) | first | .id')"
           printf 'container_id=%s\nrevision_id=%s\n' "$container_id" "$revision_id" >> "$GITHUB_OUTPUT"
+          "$HOME/yandex-cloud/bin/yc" serverless container revision get \
+            --id "$revision_id" --format json > /tmp/collector-before.json
+      - name: Preserve active ingress configuration
+        run: |
+          python3 - <<'PY'
+          import base64, json, os
+          with open('/tmp/collector-before.json') as source:
+              old = json.load(source)
+          environment = old['image']['environment']
+          for key in ('IDENTITY_JWKS_URL', 'IDENTITY_TOKEN_ISSUER', 'CORS_ALLOWED_ORIGINS',
+                      'DONATION_INGEST_HMAC_ACTIVE_KEY_ID', 'TTS_OUTCOME_HMAC_ACTIVE_KEY_ID',
+                      'TTS_OUTCOME_SUBJECT_KEY'):
+              if environment.get(key, '') != os.environ.get(key, ''):
+                  raise SystemExit(key + ' differs from active revision; refusing ingress drift')
+          audiences = json.loads(base64.b64decode(environment['IDENTITY_TELEMETRY_AUDIENCES_BASE64']))
+          if audiences != json.loads(os.environ['IDENTITY_TELEMETRY_AUDIENCES_JSON']):
+              raise SystemExit('Identity audiences differ from active revision')
+          refs = {entry['environment_variable']: entry for entry in old['secrets']}
+          for key, prefix in (('TTS_OUTCOME_HMAC_ACTIVE_SECRET', 'YC_TTS_OUTCOME'),
+                              ('DONATION_INGEST_HMAC_ACTIVE_SECRET', 'YC_INGRESS')):
+              if refs[key]['id'] != os.environ[prefix + '_LOCKBOX_SECRET_ID'] or refs[key]['version_id'] != os.environ[prefix + '_LOCKBOX_SECRET_VERSION_ID']:
+                  raise SystemExit(key + ' reference differs from active revision')
+          print('Active ingress configuration preserved')
+          PY
       - name: Mirror tested GHCR image to Yandex Registry
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -117,9 +167,12 @@ jobs:
         run: |
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
           printf '%s' "$YC_SA_KEY_JSON" | docker login cr.yandex --username json_key --password-stdin
-          docker buildx imagetools create \
-            --tag "cr.yandex/$YC_REGISTRY_ID/linka-plays-metric-collector:$IMAGE_TAG" \
-            "ghcr.io/linkasu/linka.plays-metric-collector:$IMAGE_TAG"
+          # Keep source provenance in GHCR; YC cannot ingest attestation manifests.
+          source="ghcr.io/linkasu/linka.plays-metric-collector:$IMAGE_TAG"
+          target="cr.yandex/$YC_REGISTRY_ID/linka-plays-metric-collector:$IMAGE_TAG"
+          docker pull --platform linux/amd64 "$source"
+          docker tag "$source" "$target"
+          docker push --platform linux/amd64 "$target"
 
       - name: Deploy mirrored image
         id: deploy
