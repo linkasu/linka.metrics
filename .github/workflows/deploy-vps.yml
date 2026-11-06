@@ -25,11 +25,32 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  license-scope:
+    name: Licensing publication guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      deploy: ${{ steps.scope.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Test licensing guard
+        run: python3 .github/scripts/licensing-deployment-guard.py --self-test
+      - id: scope
+        run: python3 .github/scripts/licensing-deployment-guard.py
+
   deploy:
+    needs: [license-scope]
     if: >-
-      !inputs.writer_only &&
-      (github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'))
+      needs.license-scope.outputs.deploy == 'true' && !inputs.writer_only &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      )
     runs-on: ubuntu-latest
     environment: production-vps
     env:
@@ -82,7 +103,7 @@ jobs:
             IMAGE_TAG='$IMAGE_TAG' docker compose --profile ops --profile migration --profile privacy pull writer disk-alert migrate privacy-worker; \
             IMAGE_TAG='$IMAGE_TAG' docker compose up -d --no-build clickhouse; \
             IMAGE_TAG='$IMAGE_TAG' docker compose --profile migration run --rm migrate; \
-            sh deploy/clickhouse/preflight-with-recovery.sh; \
+            sh deploy/clickhouse/preflight.sh; \
             sh deploy/clickhouse/configure-v2-users.sh; \
             IMAGE_TAG='$IMAGE_TAG' docker compose --profile privacy up -d --no-build writer privacy-worker caddy"
 
@@ -104,7 +125,8 @@ jobs:
         run: ssh "$VPS_USER@$VPS_HOST" "cd '$VPS_DEPLOY_PATH' && docker compose ps --status running --services | grep -qx writer"
 
   writer:
-    if: github.event_name == 'workflow_dispatch' && inputs.writer_only
+    needs: [license-scope]
+    if: needs.license-scope.outputs.deploy == 'true' && github.event_name == 'workflow_dispatch' && inputs.writer_only
     runs-on: ubuntu-latest
     environment: production-vps
     env:
