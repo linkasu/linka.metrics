@@ -42,6 +42,8 @@ Migrations `004+` создают checksum ledger, `ingest_batches_v2`, `privacy_
 
 ## Privacy flow
 
+Privacy `requested_at` должен быть RFC3339 в storage range `[2020-01-01, 2100-01-01)`; при разборе время нормализуется до миллисекунд без изменения исходного request body. Будущее ограничено пятью минутами. Для `delete` сохраняется предел 24 часа в прошлом; для `opt_out` ограничения по давности нет, чтобы durable delivery могла повторять исходный запрос после длительного сбоя без подмены timestamps. Повторная доставка требует свежего Identity JWT с `privacy:write`, точного совпадения scope и collector-to-writer HMAC; UUID, action, strict JSON и идемпотентность проверяются как прежде.
+
 Privacy API сначала durable-записывает active suppression и `pending` request. Worker claim имеет пятиминутный lease; stale `processing` автоматически возвращается в обработку. `privacy_deletion_progress_v2` отдельно фиксирует `processing/retry/completed` для каждой таблицы, поэтому crash после части mutations не повторяет уже завершённые таблицы. Ошибки получают bounded exponential retry и только после лимита становятся `failed`. До distributed lock worker запускается в одной активной реплике.
 
 OpenAPI: [public](openapi-v2.yaml), [internal](openapi-internal-v2.yaml).

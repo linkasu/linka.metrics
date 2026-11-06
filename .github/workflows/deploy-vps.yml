@@ -61,7 +61,7 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
         run: |
-          rsync -az --delete \
+          rsync -az \
             --exclude .git \
             --exclude .env \
             --exclude data \
@@ -152,7 +152,7 @@ jobs:
           export DOCKER_CONFIG="$3"
           new_tag="$2"
           repository=ghcr.io/linkasu/linka.plays-metric-writer
-          baseline="$repository:sha-e32585d667463065e862ba2066a06eb107be3c40"
+          baseline="$repository:sha-3351a35133f3db6b7271f9a56643812a89e8c385"
           writer=$(docker compose ps -a -q writer)
           test -n "$writer"
           old_image=$(docker inspect --format '{{.Config.Image}}' "$writer")

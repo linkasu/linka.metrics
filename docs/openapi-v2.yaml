@@ -436,4 +436,7 @@ components:
         scope:
           $ref: '#/components/schemas/Scope'
         action: { type: string, enum: [opt_out, delete] }
-        requested_at: { type: string, format: date-time }
+        requested_at:
+          type: string
+          format: date-time
+          description: RFC3339 in [2020-01-01, 2100-01-01), normalized to milliseconds. At most 5 minutes in the future; delete permits at most 24 hours in the past, while opt_out has no past-age limit for durable delivery with its original timestamp.
