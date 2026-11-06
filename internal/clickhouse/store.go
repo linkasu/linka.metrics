@@ -42,6 +42,7 @@ type Store struct {
 	privacyMu     sync.Mutex
 	v1Mu          sync.Mutex
 	fundraisingMu sync.Mutex
+	analyticsMu   sync.Mutex
 }
 
 func Open(config Config) (*Store, error) {

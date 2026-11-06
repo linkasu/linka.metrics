@@ -58,6 +58,9 @@ jobs:
         run: go test ./internal/clickhouse -run Integration -count=1
       - run: go vet ./...
 
+      - name: Check private analytics deployment boundary
+        run: python3 .github/scripts/test-analytics-deployment.py
+
   docker:
     needs: go
     runs-on: ubuntu-latest

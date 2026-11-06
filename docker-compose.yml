@@ -33,6 +33,7 @@ services:
       - ./migrations/013_v2_outcome_stream.sql:/docker-entrypoint-initdb.d/013_v2_outcome_stream.sql:ro
       - ./migrations/014_fundraising_events.sql:/docker-entrypoint-initdb.d/014_fundraising_events.sql:ro
       - ./migrations/015_v2_outcomes_daily_memory.sql:/docker-entrypoint-initdb.d/015_v2_outcomes_daily_memory.sql:ro
+      - ./migrations/018_analytics_snapshots.sql:/docker-entrypoint-initdb.d/018_analytics_snapshots.sql:ro
       - ./deploy/clickhouse/init/010-users.sh:/docker-entrypoint-initdb.d/900-users.sh:ro
       - ./deploy/clickhouse/config.d/resources.xml:/etc/clickhouse-server/config.d/resources.xml:ro
     healthcheck:
@@ -63,6 +64,10 @@ services:
       SERVICE_HMAC_ACTIVE_SECRET: ${SERVICE_HMAC_ACTIVE_SECRET:-}
       SERVICE_HMAC_PREVIOUS_KEY_ID: ${SERVICE_HMAC_PREVIOUS_KEY_ID:-}
       SERVICE_HMAC_PREVIOUS_SECRET: ${SERVICE_HMAC_PREVIOUS_SECRET:-}
+      ANALYTICS_HMAC_ACTIVE_KEY_ID: ${ANALYTICS_HMAC_ACTIVE_KEY_ID:-}
+      ANALYTICS_HMAC_ACTIVE_SECRET: ${ANALYTICS_HMAC_ACTIVE_SECRET:-}
+      ANALYTICS_HMAC_PREVIOUS_KEY_ID: ${ANALYTICS_HMAC_PREVIOUS_KEY_ID:-}
+      ANALYTICS_HMAC_PREVIOUS_SECRET: ${ANALYTICS_HMAC_PREVIOUS_SECRET:-}
       CLICKHOUSE_ADDRS: clickhouse:9000
       CLICKHOUSE_DATABASE: linka_metric
       CLICKHOUSE_USER: metric_writer
@@ -96,6 +101,35 @@ services:
       - no-new-privileges:true
     networks:
       - backend
+
+  analytics-worker:
+    profiles: ["analytics"]
+    image: ghcr.io/linkasu/linka.plays-metric-writer:${IMAGE_TAG:-latest}
+    command: ["analytics-sync"]
+    restart: unless-stopped
+    environment:
+      DEPLOYMENT_ENVIRONMENT: production
+      CLICKHOUSE_ADDRS: clickhouse:9000
+      CLICKHOUSE_DATABASE: linka_metric
+      CLICKHOUSE_USER: metric_writer
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_WRITER_PASSWORD}
+      GA4_SERVICE_ACCOUNT_JSON_BASE64: ${GA4_SERVICE_ACCOUNT_JSON_BASE64:-}
+      ANALYTICS_LOCK_PATH: /analytics-runtime/executor.lock
+    volumes:
+      - ${DATA_ROOT:-./data}/analytics-runtime:/analytics-runtime
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    mem_limit: 256m
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+      - edge
 
   migrate:
     profiles: ["migration"]

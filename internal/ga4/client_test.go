@@ -50,8 +50,69 @@ func TestRunReportRequestAndMetadata(t *testing.T) {
 	if err != nil || calls != 1 {
 		t.Fatalf("calls=%d err=%v", calls, err)
 	}
-	if report.Rows[0].MetricValues[0].Value != "42" || report.Metadata.TimeZone != "Europe/Moscow" || !report.Metadata.SubjectToThresholding || !report.Metadata.DataLossFromOtherRow {
+	if report.Empty || report.Kind != "" || report.Rows[0].MetricValues[0].Value != "42" || report.Metadata.TimeZone != "Europe/Moscow" || !report.Metadata.SubjectToThresholding || !report.Metadata.DataLossFromOtherRow {
 		t.Fatalf("unexpected report: %+v", report)
+	}
+}
+
+func TestRunReportFiltersIndependentOfDimensions(t *testing.T) {
+	r := request()
+	r.Dimensions = nil
+	r.Filters = map[string][]string{
+		"region": {"Île-de-France"}, "platform": {"ANDROID", "iOS"},
+		"country": {"United States", "RU"}, "appVersion": {"1.2.3"},
+	}
+	const wantFilter = `{"andGroup":{"expressions":[{"filter":{"fieldName":"appVersion","inListFilter":{"values":["1.2.3"],"caseSensitive":false}}},{"filter":{"fieldName":"country","inListFilter":{"values":["United States","RU"],"caseSensitive":false}}},{"filter":{"fieldName":"platform","inListFilter":{"values":["ANDROID","iOS"],"caseSensitive":false}}},{"filter":{"fieldName":"region","inListFilter":{"values":["Île-de-France"],"caseSensitive":false}}}]}}`
+	var want any
+	if err := json.Unmarshal([]byte(wantFilter), &want); err != nil {
+		t.Fatal(err)
+	}
+	c := clientFor(func(req *http.Request) (*http.Response, error) {
+		var body map[string]any
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(body["dimensionFilter"], want) || body["dimensions"] != nil || body["orderBys"] != nil {
+			t.Fatalf("filters changed values/order or added dimensions: %+v", body)
+		}
+		return response(200, `{"metricHeaders":[{"name":"activeUsers","type":"TYPE_INTEGER"}],"rows":[{"metricValues":[{"value":"42"}]}],"rowCount":1,"metadata":{"timeZone":"UTC"}}`), nil
+	})
+	for range 20 {
+		report, err := c.RunReport(context.Background(), "1", r)
+		if err != nil || len(report.DimensionHeaders) != 0 || len(report.Rows) != 1 || len(report.Rows[0].DimensionValues) != 0 {
+			t.Fatalf("filtered dimensionless report: %+v %v", report, err)
+		}
+	}
+}
+
+func TestFilterTrustBoundary(t *testing.T) {
+	for name, filters := range map[string]map[string][]string{
+		"unknown": {"unknown": {"x"}}, "PII": {"email": {"private@example.com"}},
+		"locale": {"locale": {"en"}}, "unsupported dimension": {"eventName": {"launch"}},
+		"too many keys": {"platform": {"iOS"}, "appVersion": {"1"}, "country": {"RU"}, "region": {"Moscow"}, "date": {"20260101"}},
+		"nil values":    {"country": nil}, "empty list": {"country": {}},
+		"too many values": {"country": {"a", "b", "c", "d", "e", "f", "g", "h", "i"}},
+		"empty value":     {"country": {""}}, "duplicate": {"country": {"RU", "RU"}},
+		"case duplicate": {"country": {"RU", "ru"}}, "unicode fold duplicate": {"region": {"Σ", "ς"}},
+		"leading whitespace": {"country": {" RU"}}, "trailing unicode space": {"country": {"RU\u00a0"}},
+		"control": {"region": {"Mo\nscow"}}, "unicode control": {"region": {"Mo\u0085scow"}},
+		"long bytes": {"region": {strings.Repeat("é", 51)}}, "invalid UTF8": {"region": {string([]byte{0xff})}},
+		"email guard": {"appVersion": {"private@example.com"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := request()
+			r.Filters = filters
+			c := NewClient(func(context.Context) (string, error) { t.Fatal("token fetched for invalid filters"); return "", nil }, nil)
+			_, err := c.RunReport(context.Background(), "1", r)
+			if err == nil || strings.Contains(err.Error(), "private") || strings.Contains(err.Error(), "example") {
+				t.Fatalf("accepted invalid filters or leaked value: %v", err)
+			}
+		})
+	}
+	r := request()
+	r.Filters = map[string][]string{"region": {strings.Repeat("é", 50), "b", "c", "d", "e", "f", "g", "h"}}
+	if err := validateRequest("1", r); err != nil {
+		t.Fatalf("100-byte value and eight values rejected: %v", err)
 	}
 }
 
@@ -83,11 +144,19 @@ func TestPaginationAndIncomplete(t *testing.T) {
 	for _, drift := range []string{"none", "rowCount", "sampling", "sampling omitted"} {
 		t.Run(drift, func(t *testing.T) {
 			calls := 0
+			var firstFilter json.RawMessage
 			c := clientFor(func(r *http.Request) (*http.Response, error) {
 				var body struct {
-					Offset string `json:"offset"`
+					Offset          string          `json:"offset"`
+					DimensionFilter json.RawMessage `json:"dimensionFilter"`
 				}
 				json.NewDecoder(r.Body).Decode(&body)
+				if calls == 0 {
+					firstFilter = body.DimensionFilter
+				}
+				if len(body.DimensionFilter) == 0 || string(body.DimensionFilter) != string(firstFilter) || strings.Contains(string(body.DimensionFilter), "secret-token") {
+					t.Fatalf("pagination changed filter or leaked auth: %s", body.DimensionFilter)
+				}
 				if body.Offset != fmt.Sprint(calls*10000) {
 					t.Fatalf("offset=%s", body.Offset)
 				}
@@ -113,7 +182,9 @@ func TestPaginationAndIncomplete(t *testing.T) {
 				page = strings.Replace(page, `"metadata":{`, `"metadata":{`+sampling, 1)
 				return response(200, page), nil
 			})
-			report, err := c.RunReport(context.Background(), "1", request())
+			r := request()
+			r.Filters = map[string][]string{"platform": {"ANDROID", "iOS"}, "country": {"Russia"}}
+			report, err := c.RunReport(context.Background(), "1", r)
 			if drift != "none" {
 				if !errors.Is(err, ErrIncomplete) || len(report.Rows) != 0 {
 					t.Fatalf("partial report: %d %v", len(report.Rows), err)
@@ -208,6 +279,9 @@ func TestEmptyReportAndNativeNumericValues(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if report.Empty {
+				t.Fatal("headered report marked as source-empty")
+			}
 			if value != "" && report.Rows[0].MetricValues[0].Value != value {
 				t.Fatal("numeric value changed")
 			}
@@ -289,5 +363,59 @@ func TestSamplingMetadataPreserved(t *testing.T) {
 	data, err := json.Marshal(r.Metadata)
 	if err != nil || !strings.Contains(string(data), `"samplingMetadatas":`+sampling) || !r.Metadata.SubjectToThresholding || !r.Metadata.DataLossFromOtherRow {
 		t.Fatalf("sampling/threshold metadata lost: %s %v", data, err)
+	}
+}
+
+func TestHeaderlessSourceEmptyReport(t *testing.T) {
+	const empty = `{"kind":"analyticsData#runReport","metadata":{"currencyCode":"USD","timeZone":"Etc/GMT-3"}}`
+	for name, body := range map[string]string{
+		"live response":          empty,
+		"explicit zero":          strings.Replace(empty, `"metadata":`, `"rowCount":0,"rows":[],"metadata":`, 1),
+		"sampling and threshold": strings.Replace(empty, `"metadata":{`, `"metadata":{"subjectToThresholding":true,"dataLossFromOtherRow":true,"samplingMetadatas":[{"samplesReadCount":"9007199254740993","samplingSpaceSize":"9223372036854775807"}],`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			req := request()
+			req.Filters = map[string][]string{"country": {"RU"}}
+			r, err := clientFor(func(*http.Request) (*http.Response, error) {
+				calls++
+				return response(200, body), nil
+			}).RunReport(context.Background(), "1", req)
+			if err != nil || calls != 1 {
+				t.Fatalf("source-empty report: calls=%d err=%v", calls, err)
+			}
+			if !r.Empty || r.Kind != "analyticsData#runReport" || r.RowCount != 0 || len(r.Rows) != 0 || r.DimensionHeaders != nil || r.MetricHeaders != nil || r.Metadata.TimeZone != "Etc/GMT-3" {
+				t.Fatalf("manufactured data or lost metadata: %+v", r)
+			}
+			data, err := json.Marshal(r)
+			if err != nil || !strings.Contains(string(data), `"empty":true`) || !strings.Contains(string(data), `"kind":"analyticsData#runReport"`) || !strings.Contains(string(data), `"currencyCode":"USD"`) || strings.Contains(string(data), `"dimensionHeaders"`) || strings.Contains(string(data), `"metricHeaders"`) {
+				t.Fatalf("source-empty JSON contract: %s %v", data, err)
+			}
+			if name == "sampling and threshold" && (!r.Metadata.SubjectToThresholding || !r.Metadata.DataLossFromOtherRow || len(r.Metadata.SamplingMetadatas) != 1 || r.Metadata.SamplingMetadatas[0].SamplesReadCount != "9007199254740993") {
+				t.Fatalf("sampling/threshold metadata lost: %+v", r.Metadata)
+			}
+		})
+	}
+	for name, body := range map[string]string{
+		"no kind":                   strings.Replace(empty, `"kind":"analyticsData#runReport",`, "", 1),
+		"wrong kind":                strings.Replace(empty, "analyticsData#runReport", "other", 1),
+		"missing timezone":          strings.Replace(empty, `,"timeZone":"Etc/GMT-3"`, "", 1),
+		"invalid timezone":          strings.Replace(empty, "Etc/GMT-3", "not/a/timezone", 1),
+		"null count":                strings.Replace(empty, `"metadata":`, `"rowCount":null,"metadata":`, 1),
+		"nonzero count":             strings.Replace(empty, `"metadata":`, `"rowCount":1,"metadata":`, 1),
+		"nonempty rows":             strings.Replace(empty, `"metadata":`, `"rowCount":1,"rows":[{"metricValues":[{"value":"1"}]}],"metadata":`, 1),
+		"partial dimension headers": strings.Replace(empty, `"metadata":`, `"dimensionHeaders":[{"name":"date"}],"metadata":`, 1),
+		"partial metric headers":    strings.Replace(empty, `"metadata":`, `"metricHeaders":[{"name":"activeUsers","type":"TYPE_INTEGER"}],"metadata":`, 1),
+		"empty headers":             strings.Replace(empty, `"metadata":`, `"dimensionHeaders":[],"metricHeaders":[],"metadata":`, 1),
+		"null headers":              strings.Replace(empty, `"metadata":`, `"dimensionHeaders":null,"metricHeaders":null,"metadata":`, 1),
+		"forged empty":              `{"empty":true,"metadata":{"timeZone":"UTC"}}`,
+		"empty object":              `{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, err := clientFor(func(*http.Request) (*http.Response, error) { return response(200, body), nil }).RunReport(context.Background(), "1", request())
+			if !errors.Is(err, ErrIncomplete) || !reflect.DeepEqual(r, Report{}) {
+				t.Fatalf("accepted malformed headerless report: %+v %v", r, err)
+			}
+		})
 	}
 }

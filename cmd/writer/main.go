@@ -2,19 +2,27 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net/http"
 	"os"
-	"strings"
 	"time"
 
+	"github.com/linkasu/linka.plays-metric/internal/analyticsapi"
 	"github.com/linkasu/linka.plays-metric/internal/app"
 	"github.com/linkasu/linka.plays-metric/internal/auth"
-	metricclickhouse "github.com/linkasu/linka.plays-metric/internal/clickhouse"
 	"github.com/linkasu/linka.plays-metric/internal/writer"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if len(os.Args) > 1 && os.Args[1] == "analytics-sync" {
+		if err := runAnalyticsSync(logger, os.Args[2:]); err != nil {
+			logger.Error("analytics sync stopped", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(logger); err != nil {
 		logger.Error("writer stopped", "error", err)
 		os.Exit(1)
@@ -34,34 +42,11 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	password, err := app.Env("CLICKHOUSE_PASSWORD")
-	if err != nil {
-		return err
-	}
-	addresses := os.Getenv("CLICKHOUSE_ADDRS")
-	if addresses == "" {
-		addresses = "clickhouse:9000"
-	}
-	username := os.Getenv("CLICKHOUSE_USER")
-	if username == "" {
-		username = "metric_writer"
-	}
-	database := os.Getenv("CLICKHOUSE_DATABASE")
-	if database == "" {
-		database = "linka_metric"
-	}
 	retentionConfig, err := app.LoadRetention()
 	if err != nil {
 		return err
 	}
-	store, err := metricclickhouse.Open(metricclickhouse.Config{
-		Addresses: strings.Split(addresses, ","),
-		Database:  database,
-		Username:  username,
-		Password:  password,
-		Secure:    os.Getenv("CLICKHOUSE_SECURE") == "true",
-		Retention: retentionConfig,
-	})
+	store, err := openMetricStore(retentionConfig)
 	if err != nil {
 		return err
 	}
@@ -75,5 +60,23 @@ func run(logger *slog.Logger) error {
 	if address == "" {
 		address = ":8081"
 	}
-	return app.Serve(address, writer.NewServerWithV2AndFundraising(store, store, store, writerSecret, serviceVerifier, logger, 5*time.Minute), logger)
+	handler := writer.NewServerWithV2AndFundraising(store, store, store, writerSecret, serviceVerifier, logger, 5*time.Minute)
+	if os.Getenv("ANALYTICS_HMAC_ACTIVE_SECRET") != "" || os.Getenv("ANALYTICS_HMAC_ACTIVE_KEY_ID") != "" || os.Getenv("ANALYTICS_HMAC_PREVIOUS_SECRET") != "" || os.Getenv("ANALYTICS_HMAC_PREVIOUS_KEY_ID") != "" {
+		if os.Getenv("ANALYTICS_HMAC_ACTIVE_KEY_ID") == "" || os.Getenv("ANALYTICS_HMAC_ACTIVE_SECRET") == "" {
+			return errors.New("partial analytics HMAC configuration")
+		}
+		key, previous, err := app.HMACKeyring("ANALYTICS_HMAC", nil)
+		if err != nil {
+			return err
+		}
+		verifier, err := auth.NewServiceVerifier(key, previous, "crm-analytics", 5*time.Minute)
+		if err != nil {
+			return err
+		}
+		mux := http.NewServeMux()
+		mux.Handle("/internal/analytics/", analyticsapi.NewHandler(store, verifier, logger))
+		mux.Handle("/", handler)
+		handler = mux
+	}
+	return app.Serve(address, handler, logger)
 }

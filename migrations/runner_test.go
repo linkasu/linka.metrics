@@ -98,8 +98,14 @@ func TestMultiProductMigrationsAreEmbedded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest := migrations[len(migrations)-1]; latest.Version != 17 || latest.Name != "017_v2_retention.sql" {
+	if latest := migrations[len(migrations)-1]; latest.Version != 18 || latest.Name != "018_analytics_snapshots.sql" {
 		t.Fatalf("latest migration = %03d %s", latest.Version, latest.Name)
+	}
+	analyticsSQL := strings.Join(migrations[len(migrations)-1].Statements, "\n")
+	for _, required := range []string{"analytics_requests_v1", "analytics_request_aliases_v1", "analytics_snapshots_v1", "ReplacingMergeTree(revision)"} {
+		if !strings.Contains(analyticsSQL, required) {
+			t.Fatalf("analytics migration is incomplete: %s", required)
+		}
 	}
 	var productSQL, datalensSQL, outcomeSQL, fundraisingSQL, outcomeMemorySQL string
 	for _, migration := range migrations {

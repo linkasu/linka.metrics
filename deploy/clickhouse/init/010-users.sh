@@ -40,6 +40,17 @@ clickhouse-client \
     GRANT SELECT, INSERT ON linka_metric.fundraising_ingest_batches_v1 TO metric_writer;
     GRANT INSERT ON linka_metric.fundraising_events_v1 TO metric_writer;
     GRANT SELECT, INSERT ON linka_metric.record_registry_v2 TO metric_writer;
+    GRANT SELECT, INSERT ON linka_metric.analytics_requests_v1 TO metric_writer;
+    GRANT SELECT, INSERT ON linka_metric.analytics_request_aliases_v1 TO metric_writer;
+    GRANT SELECT, INSERT ON linka_metric.analytics_snapshots_v1 TO metric_writer;
+    GRANT SELECT ON linka_metric.datalens_product_v2 TO metric_writer;
+    GRANT SELECT ON linka_metric.datalens_outcomes_v1 TO metric_writer;
+    GRANT SELECT ON linka_metric.datalens_common_v3 TO metric_writer;
+    GRANT SELECT ON linka_metric.datalens_plays_v3 TO metric_writer;
+    GRANT SELECT(expires_at, product, occurred_at) ON linka_metric.common_events_v2 TO metric_writer;
+    GRANT SELECT(expires_at, product, occurred_at) ON linka_metric.plays_events_v2 TO metric_writer;
+    GRANT SELECT(expires_at, product, occurred_at) ON linka_metric.product_events_v2 TO metric_writer;
+    GRANT SELECT(expires_at, product, occurred_at) ON linka_metric.product_outcomes_v2 TO metric_writer;
     GRANT SELECT, INSERT ON linka_metric.privacy_suppressions_v2 TO metric_privacy;
     GRANT SELECT, INSERT ON linka_metric.privacy_deletion_progress_v2 TO metric_privacy;
     GRANT ALTER DELETE ON linka_metric.record_registry_v2 TO metric_privacy;

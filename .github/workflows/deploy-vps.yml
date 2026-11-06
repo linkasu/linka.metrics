@@ -103,7 +103,7 @@ jobs:
             "set -eu; trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT; \
             docker login ghcr.io --username '$GHCR_USER' --password-stdin; \
             cd '$VPS_DEPLOY_PATH'; \
-            IMAGE_TAG='$IMAGE_TAG' docker compose --profile ops --profile migration --profile privacy pull writer disk-alert migrate privacy-worker; \
+            IMAGE_TAG='$IMAGE_TAG' docker compose --profile ops --profile migration --profile privacy --profile analytics pull writer disk-alert migrate privacy-worker analytics-worker; \
             sh deploy/clickhouse/backup-retention.sh '$IMAGE_TAG'; \
             sh deploy/clickhouse/activate-retention.sh '$IMAGE_TAG'; \
             sed -i.bak 's/^IMAGE_TAG=.*/IMAGE_TAG=$IMAGE_TAG/' .env; \
@@ -111,7 +111,8 @@ jobs:
             IMAGE_TAG='$IMAGE_TAG' docker compose --profile migration run --rm migrate; \
             sh deploy/clickhouse/preflight.sh; \
             sh deploy/clickhouse/configure-v2-users.sh; \
-            IMAGE_TAG='$IMAGE_TAG' docker compose --profile privacy up -d --no-build writer privacy-worker caddy"
+            IMAGE_TAG='$IMAGE_TAG' docker compose --profile privacy up -d --no-build writer privacy-worker caddy; \
+            IMAGE_TAG='$IMAGE_TAG' sh deploy/analytics-start.sh"
 
       - name: Configure DataLens read-only user
         env:
