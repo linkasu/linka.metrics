@@ -1,5 +1,8 @@
 .DS_Store
 .env
+.env.bak
+.env.before-retention-*
+.env.retention.*
 data/
 bin/
 coverage.out

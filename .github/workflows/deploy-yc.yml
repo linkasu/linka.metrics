@@ -20,6 +20,10 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+concurrency:
+  group: metrics-production-yc
+  cancel-in-progress: false
+
 jobs:
   license-scope:
     name: Licensing publication guard

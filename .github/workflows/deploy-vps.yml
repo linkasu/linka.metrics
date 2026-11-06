@@ -24,6 +24,10 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+concurrency:
+  group: metrics-production-vps
+  cancel-in-progress: false
+
 jobs:
   license-scope:
     name: Licensing publication guard
@@ -99,8 +103,10 @@ jobs:
             "set -eu; trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT; \
             docker login ghcr.io --username '$GHCR_USER' --password-stdin; \
             cd '$VPS_DEPLOY_PATH'; \
-            sed -i.bak 's/^IMAGE_TAG=.*/IMAGE_TAG=$IMAGE_TAG/' .env; \
             IMAGE_TAG='$IMAGE_TAG' docker compose --profile ops --profile migration --profile privacy pull writer disk-alert migrate privacy-worker; \
+            sh deploy/clickhouse/backup-retention.sh '$IMAGE_TAG'; \
+            sh deploy/clickhouse/activate-retention.sh '$IMAGE_TAG'; \
+            sed -i.bak 's/^IMAGE_TAG=.*/IMAGE_TAG=$IMAGE_TAG/' .env; \
             IMAGE_TAG='$IMAGE_TAG' docker compose up -d --no-build clickhouse; \
             IMAGE_TAG='$IMAGE_TAG' docker compose --profile migration run --rm migrate; \
             sh deploy/clickhouse/preflight.sh; \
@@ -174,7 +180,7 @@ jobs:
           export DOCKER_CONFIG="$3"
           new_tag="$2"
           repository=ghcr.io/linkasu/linka.plays-metric-writer
-          baseline="$repository:sha-3351a35133f3db6b7271f9a56643812a89e8c385"
+          baseline="$repository:sha-947eb22c0edbf8f6625b29d955b2dd716d24c98d"
           writer=$(docker compose ps -a -q writer)
           test -n "$writer"
           old_image=$(docker inspect --format '{{.Config.Image}}' "$writer")

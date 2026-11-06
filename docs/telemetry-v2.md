@@ -38,7 +38,9 @@ Writer сериализует check/write внутри процесса, а `rec
 
 Migrations `004+` создают checksum ledger, `ingest_batches_v2`, `privacy_suppressions_v2`, typed `common_events_v2`, `technical_events_v2`, `plays_events_v2`, `product_events_v2`, `product_outcomes_v2` и safe DataLens views. Все V2 data tables partitioned по `ingested_at`; event time не управляет partition lifecycle. Raw opaque keys не выдаются DataLens, suppressed scopes исключаются во view.
 
-`RETENTION_V2_INGEST_BATCHES`, `RETENTION_V2_COMMON`, `RETENTION_V2_TECHNICAL`, `RETENTION_V2_PLAYS`, `RETENTION_V2_PRODUCT`, `RETENTION_V2_OUTCOME`, `RETENTION_V2_PRIVACY` принимают positive Go durations. Пустое значение оставляет `expires_at=NULL`. SQL TTL отсутствует и не должен добавляться до юридического утверждения сроков и отдельного operational review.
+`RETENTION_V2_INGEST_BATCHES`, `RETENTION_V2_COMMON`, `RETENTION_V2_TECHNICAL`, `RETENTION_V2_PLAYS`, `RETENTION_V2_PRODUCT`, `RETENTION_V2_OUTCOME`, `RETENTION_V2_REGISTRY` задают 180 дней (`4320h`) для новых событий, batch ledger и registry. `RETENTION_V2_PRIVACY` и `RETENTION_V2_DELETION_PROGRESS` задают 1095 дней (`26280h`) для новых privacy-записей. Активные `opt_out` бессрочны: их удаление могло бы снова раскрыть исторические данные. Все длительности обязательны в production и читаются writer, privacy worker и importer одним parser.
+
+Migration `017_v2_retention.sql` включает TTL и expiry-фильтры DataLens; миграции 001–016 не изменяются. Исторические `expires_at IS NULL` не заполняются и не удаляются TTL. Privacy TTL не удаляет активные opt-out, незавершённые запросы и незавершённый deletion progress. Физическое TTL-удаление ленивое; views скрывают истёкшие события сразу. Backup имеет отдельную политику и не заменяет TTL.
 
 ## Privacy flow
 

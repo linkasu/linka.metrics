@@ -98,7 +98,7 @@ func TestMultiProductMigrationsAreEmbedded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest := migrations[len(migrations)-1]; latest.Version != 16 || latest.Name != "016_limit_merge_memory.sql" {
+	if latest := migrations[len(migrations)-1]; latest.Version != 17 || latest.Name != "017_v2_retention.sql" {
 		t.Fatalf("latest migration = %03d %s", latest.Version, latest.Name)
 	}
 	var productSQL, datalensSQL, outcomeSQL, fundraisingSQL, outcomeMemorySQL string

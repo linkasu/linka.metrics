@@ -44,7 +44,7 @@ func (s *Store) CreateLegacyPrivacyRequest(ctx context.Context, request v1.Valid
 		legacy_installation_id
 	) VALUES (?, ?, ?, ?, NULL, NULL, 'delete', 'pending', ?, ?, ?, ?, true, NULL, ?, ?)`,
 		uuid.MustParse(request.RequestID), string(product.LinkaPlays), &productSpec.OpaqueKey, subjectKey, bodySHA,
-		request.RequestedAtTime, updatedAt, updatedAt, expiresAt(updatedAt, s.retention.Privacy), uuid.MustParse(request.InstallationID))
+		sqlTime(request.RequestedAtTime), sqlTime(updatedAt), sqlTime(updatedAt), sqlNullableTime(expiresAt(updatedAt, s.retention.Privacy)), uuid.MustParse(request.InstallationID))
 	if err != nil {
 		return v2.PrivacyResult{}, fmt.Errorf("insert V1 privacy request: %w", err)
 	}
@@ -73,13 +73,17 @@ func (s *Store) CreatePrivacyRequest(ctx context.Context, request v2.ValidatedPr
 	}
 
 	updatedAt := s.now().UTC()
+	var expiry *time.Time
+	if request.Action != v2.PrivacyOptOut {
+		expiry = expiresAt(updatedAt, s.retention.Privacy)
+	}
 	err = s.connection.Exec(ctx, `INSERT INTO privacy_suppressions_v2 (
 		request_id, product, product_key, subject_key, person_key, org_key, action, status,
 		body_sha256, requested_at, ingested_at, updated_at, active, failure_code, expires_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, true, NULL, ?)`,
 		uuid.MustParse(request.RequestID), string(request.Scope.Product), &request.ProductKey, request.Scope.SubjectKey,
-		request.Scope.PersonKey, request.Scope.OrgKey, string(request.Action), bodySHA, request.RequestedAtTime,
-		updatedAt, updatedAt, expiresAt(updatedAt, s.retention.Privacy),
+		request.Scope.PersonKey, request.Scope.OrgKey, string(request.Action), bodySHA, sqlTime(request.RequestedAtTime),
+		sqlTime(updatedAt), sqlTime(updatedAt), sqlNullableTime(expiry),
 	)
 	if err != nil {
 		return v2.PrivacyResult{}, fmt.Errorf("insert privacy request: %w", err)
@@ -246,11 +250,16 @@ func (s *Store) deletionProgress(ctx context.Context, request privacy.Request, t
 
 func (s *Store) insertDeletionProgress(ctx context.Context, request privacy.Request, table, status string, attempts uint16,
 	availableAt time.Time, leaseUntil *time.Time, lastError *string, completedAt *time.Time) error {
+	var expiry *time.Time
+	if status == "completed" && completedAt != nil && request.ExpiresAt != nil {
+		expiry = expiresAt(*completedAt, s.retention.DeletionProgress)
+	}
 	err := s.connection.Exec(ctx, `INSERT INTO privacy_deletion_progress_v2 (
 		request_id, product, table_name, status, attempts, available_at, lease_until,
-		last_error, updated_at, completed_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, uuid.MustParse(request.RequestID), string(request.Scope.Product), table,
-		status, attempts, availableAt, leaseUntil, lastError, privacyStatusVersion(request, status, attempts), completedAt)
+		last_error, updated_at, completed_at, expires_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, uuid.MustParse(request.RequestID), string(request.Scope.Product), table,
+		status, attempts, sqlTime(availableAt), sqlNullableTime(leaseUntil), lastError, sqlTime(privacyStatusVersion(request, status, attempts)), sqlNullableTime(completedAt),
+		sqlNullableTime(expiry))
 	if err != nil {
 		return fmt.Errorf("insert privacy deletion progress for %s: %w", table, err)
 	}
@@ -259,6 +268,12 @@ func (s *Store) insertDeletionProgress(ctx context.Context, request privacy.Requ
 
 func (s *Store) insertPrivacyStatus(ctx context.Context, request privacy.Request, status string, failureCode *string,
 	attempts uint16, availableAt time.Time, leaseUntil *time.Time) error {
+	expiry := request.ExpiresAt
+	if request.Action == v2.PrivacyOptOut {
+		expiry = nil
+	} else if status == "completed" && expiry != nil {
+		expiry = expiresAt(s.now().UTC(), s.retention.Privacy)
+	}
 	err := s.connection.Exec(ctx, `INSERT INTO privacy_suppressions_v2 (
 		request_id, product, product_key, subject_key, person_key, org_key, action, status,
 		body_sha256, requested_at, ingested_at, updated_at, active, failure_code, expires_at,
@@ -266,7 +281,7 @@ func (s *Store) insertPrivacyStatus(ctx context.Context, request privacy.Request
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, true, ?, ?, ?, ?, ?, ?)`,
 		uuid.MustParse(request.RequestID), string(request.Scope.Product), &request.ProductKey, request.Scope.SubjectKey,
 		request.Scope.PersonKey, request.Scope.OrgKey, string(request.Action), status, request.BodySHA256,
-		request.RequestedAt, request.IngestedAt, privacyStatusVersion(request, status, attempts), failureCode, request.ExpiresAt, attempts, availableAt, leaseUntil,
+		sqlTime(request.RequestedAt), sqlTime(request.IngestedAt), sqlTime(privacyStatusVersion(request, status, attempts)), failureCode, sqlNullableTime(expiry), attempts, sqlTime(availableAt), sqlNullableTime(leaseUntil),
 		request.LegacyInstallationID,
 	)
 	if err != nil {

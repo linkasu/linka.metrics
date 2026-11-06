@@ -29,7 +29,9 @@ Collector генерирует UUID v4 криптографическим ген
 
 Collector проверяет bearer token и весь batch, затем подписывает точное тело запроса отдельным HMAC-секретом writer. V2 service HMAC связывает версию, HTTP method, path, caller, key id, request/idempotency id, timestamp и SHA-256 точного тела; writer принимает active и один previous key при ротации. Writer проверяет подпись до разбора и вставки. В рабочей конфигурации внешние соединения завершаются TLS.
 
-В таблицах ClickHouse нет активного TTL. V2 содержит nullable `expires_at`; он заполняется только после явной настройки утверждённых юридической функцией сроков. Настройка срока сама по себе не включает SQL `TTL`: удаление по сроку требует отдельного согласованного operational change. `ReplacingMergeTree`, stable record IDs, batch ledger и DataLens views с `FINAL` обеспечивают безопасный replay/read path.
+Migration `017` включает TTL для новых V2-записей: события, batches и registry — 180 дней от ingestion; завершённые privacy-записи и deletion progress — 1095 дней. Активные opt-out бессрочны, а незавершённые privacy-запросы и progress не удаляются TTL. Исторические `expires_at IS NULL` не заполняются и не удаляются; retry старого batch также сохраняет NULL. TTL удаляет лениво при merge, DataLens views скрывают истёкшие события до физического удаления. Миграции 001–016 не меняются, новые durations обязательны в production.
+
+Перед production-миграцией deployment создаёт native backup ClickHouse и проверяет восстановление в изолированную временную БД; при ошибке TTL не включается. Архив хранится в data volume, отдельно от активных таблиц, и не удаляется TTL. Это защита от ошибки миграции, не off-site backup и не гарантия восстановления после потери диска; расписание независимых backup и их срок хранения требуют отдельного operational решения.
 
 ## Opt-out и удаление
 

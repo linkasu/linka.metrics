@@ -141,9 +141,13 @@ func openStore() (*metricclickhouse.Store, error) {
 	if database == "" {
 		database = "linka_metric"
 	}
+	retentionConfig, err := app.LoadRetention()
+	if err != nil {
+		return nil, err
+	}
 	store, err := metricclickhouse.Open(metricclickhouse.Config{
 		Addresses: strings.Split(addresses, ","), Database: database, Username: username, Password: password,
-		Secure: os.Getenv("CLICKHOUSE_SECURE") == "true",
+		Secure: os.Getenv("CLICKHOUSE_SECURE") == "true", Retention: retentionConfig,
 	})
 	if err != nil {
 		return nil, err
