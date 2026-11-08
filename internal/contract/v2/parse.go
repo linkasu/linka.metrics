@@ -24,6 +24,23 @@ type batchEnvelope struct {
 	Records json.RawMessage `json:"records"`
 }
 
+func (scope *Scope) UnmarshalJSON(data []byte) error {
+	type plainScope Scope
+	var decoded plainScope
+	if err := jsonstrict.DecodeObject(data, &decoded, MaxJSONDepth); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if _, present := fields["consent_epoch"]; present && decoded.ConsentEpoch == nil {
+		return errors.New("consent_epoch must be a positive integer, not null")
+	}
+	*scope = Scope(decoded)
+	return nil
+}
+
 func ParseBatch(data []byte, now time.Time) (ValidatedBatch, error) {
 	if len(data) > MaxBatchBytes {
 		return ValidatedBatch{}, errors.New("batch exceeds maximum size")
@@ -170,6 +187,9 @@ func ParsePrivacyRequest(data []byte, now time.Time) (ValidatedPrivacyRequest, e
 	if err := jsonstrict.DecodeObject(data, &request, MaxJSONDepth); err != nil {
 		return ValidatedPrivacyRequest{}, fmt.Errorf("decode privacy request: %w", err)
 	}
+	if request.Scope.ConsentEpoch != nil {
+		return ValidatedPrivacyRequest{}, errors.New("privacy scope does not accept consent_epoch")
+	}
 	if request.SchemaVersion != SchemaVersion {
 		return ValidatedPrivacyRequest{}, errors.New("unsupported schema_version")
 	}
@@ -231,6 +251,9 @@ func validateHeader(header BatchHeader, now time.Time) (ValidatedBatch, product.
 }
 
 func validateScope(scope Scope) (product.Spec, error) {
+	if scope.ConsentEpoch != nil && *scope.ConsentEpoch == 0 {
+		return product.Spec{}, errors.New("consent_epoch must be positive")
+	}
 	spec, ok := product.Lookup(scope.Product)
 	if !ok {
 		return product.Spec{}, errors.New("unknown product")

@@ -61,6 +61,37 @@ paths:
         '403': { description: Scope is suppressed. }
         '409': { description: Same request ID with a different body hash. }
         '503': { description: Durable store unavailable. }
+  /internal/v2/consents:
+    post:
+      operationId: internalRecordConsentV2
+      description: Collector-authorized control with the original exact JSON bytes. LINKA-HMAC-V2 binds method, path, body and request ID.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/SignatureVersion'
+        - $ref: '#/components/parameters/KeyID'
+        - $ref: '#/components/parameters/Caller'
+        - $ref: '#/components/parameters/RequestID'
+        - $ref: '#/components/parameters/Timestamp'
+        - $ref: '#/components/parameters/BodySHA'
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './openapi-v2.yaml#/components/schemas/ConsentRequest'
+      responses:
+        '200':
+          description: Durable completed receipt, including stale no-ops.
+          content:
+            application/json:
+              schema:
+                $ref: './openapi-v2.yaml#/components/schemas/ConsentResult'
+        '400': { description: Invalid strict DTO or idempotency binding. }
+        '401': { description: Invalid collector service signature. }
+        '403': { description: A grant cannot override a privacy suppression. }
+        '409': { description: Exact-body idempotency conflict or invalid non-stale transition. }
+        '503': { description: Durable store unavailable; no completion acknowledged. }
   /internal/v2/privacy/requests:
     post:
       operationId: internalCreatePrivacyRequestV2

@@ -18,12 +18,13 @@ import (
 const productTokenVersion = "v2"
 
 type ProductClaims struct {
-	Product    product.ID
-	SubjectKey string
-	PersonKey  *string
-	OrgKey     *string
-	IssuedAt   time.Time
-	ExpiresAt  time.Time
+	ConsentEpoch *uint64
+	Product      product.ID
+	SubjectKey   string
+	PersonKey    *string
+	OrgKey       *string
+	IssuedAt     time.Time
+	ExpiresAt    time.Time
 }
 
 type ProductTokens struct {
@@ -123,6 +124,9 @@ func (t *ProductTokens) Verify(token string) (ProductClaims, error) {
 }
 
 func (t *ProductTokens) issue(claims ProductClaims) (ProductClaims, string, error) {
+	if claims.ConsentEpoch != nil {
+		return ProductClaims{}, "", errors.New("legacy product tokens cannot carry consent epochs")
+	}
 	if _, ok := product.Lookup(claims.Product); !ok || !opaqueKey(claims.SubjectKey) {
 		return ProductClaims{}, "", errors.New("invalid product token scope")
 	}

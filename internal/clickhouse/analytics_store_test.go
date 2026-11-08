@@ -384,7 +384,7 @@ func TestAnalyticsPrivacyAndPublicationCapsExpiry(t *testing.T) {
 	if len(conn.writes) != 1 || conn.writes[0][5] != sqlTime(expiry) {
 		t.Fatalf("expiry not capped: %+v", conn.writes)
 	}
-	if !strings.Contains(conn.queries[1], "FINAL ORDER BY scope_state") || !strings.Contains(conn.queries[2], "minOrNull(expires_at)") {
+	if !strings.Contains(conn.queries[1], "FINAL WHERE applied = true) ORDER BY scope_state") || !strings.Contains(conn.queries[1], "FROM privacy_suppressions_v2 FINAL") || !strings.Contains(conn.queries[2], "minOrNull(expires_at)") {
 		t.Fatalf("privacy query lost FINAL/sort/expiry: %v", conn.queries)
 	}
 	if got := analyticsStorageError(context.Background(), errors.New("private identifier")); strings.Contains(got.Error(), "private identifier") {

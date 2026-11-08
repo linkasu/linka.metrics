@@ -29,13 +29,15 @@ Collector генерирует UUID v4 криптографическим ген
 
 Collector проверяет bearer token и весь batch, затем подписывает точное тело запроса отдельным HMAC-секретом writer. V2 service HMAC связывает версию, HTTP method, path, caller, key id, request/idempotency id, timestamp и SHA-256 точного тела; writer принимает active и один previous key при ротации. Writer проверяет подпись до разбора и вставки. В рабочей конфигурации внешние соединения завершаются TLS.
 
-Migration `017` включает TTL для новых V2-записей: события, batches и registry — 180 дней от ingestion; завершённые privacy-записи и deletion progress — 1095 дней. Активные opt-out бессрочны, а незавершённые privacy-запросы и progress не удаляются TTL. Исторические `expires_at IS NULL` не заполняются и не удаляются; retry старого batch также сохраняет NULL. TTL удаляет лениво при merge, DataLens views скрывают истёкшие события до физического удаления. Миграции 001–016 не меняются, новые durations обязательны в production.
+Migration `017` включает TTL для новых V2-записей: события, batches и registry — 180 дней от ingestion; завершённые неактивные privacy-записи и deletion progress — 1095 дней. Migration `019` сохраняет бессрочно все active suppressions (включая delete) и consent safety ledger, чтобы позднее согласие не обходило удаление. Незавершённые privacy-запросы и progress не удаляются TTL. Исторические `expires_at IS NULL` не заполняются и не удаляются; retry старого batch также сохраняет NULL. TTL удаляет лениво при merge, DataLens views скрывают истёкшие события до физического удаления. Исторические миграции не меняются, durations обязательны в production.
 
 Перед production-миграцией deployment создаёт native backup ClickHouse и проверяет восстановление в изолированную временную БД; при ошибке TTL не включается. Архив хранится в data volume, отдельно от активных таблиц, и не удаляется TTL. Это защита от ошибки миграции, не off-site backup и не гарантия восстановления после потери диска; расписание независимых backup и их срок хранения требуют отдельного operational решения.
 
 ## Opt-out и удаление
 
 `POST /v2/privacy/requests` принимает `opt_out` или `delete` только в scope предъявленного Identity JWT. Ответ `202` означает, что active suppression и request надёжно записаны, но не означает завершение удаления. Worker использует lease, bounded retry и отдельный durable progress для каждой ClickHouse table; `completed` появляется только после всех synchronous mutations. Повторный idempotent POST возвращает текущий status и служит receipt polling для Identity.
+
+Обратимое согласие передаётся отдельно: [`POST /v2/consents`](consent-v2.md), только по целевому Identity service JWT с единственным `consent:write`. Отзыв закрывает epoch навсегда; повторное согласие требует нового epoch без смены установки. Legacy opt-out/delete не снимаются этим endpoint. Удаление телеметрии охватывает все epoch; минимальные consent receipts и revocation tombstones сохраняются без payload, иначе запоздалый grant мог бы открыть закрытую историю.
 
 `POST /v1/privacy/requests` удаляет `events` и `session_summaries` только для installation из предъявленного V1 token и блокирует последующую загрузку этой installation. Удаление v1 по person/org невозможно без внешнего сопоставления: v1 хранит только случайный installation UUID.
 

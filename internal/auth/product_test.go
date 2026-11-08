@@ -32,6 +32,17 @@ func TestProductTokenIsProductScopedAndOpaque(t *testing.T) {
 	}
 }
 
+func TestLegacyProductTokenCannotSilentlyDropConsentEpoch(t *testing.T) {
+	manager, err := NewProductTokens(ServiceKey{ID: "test", Secret: []byte(strings.Repeat("s", 32))}, nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch := uint64(1)
+	if _, _, err := manager.IssueScope(ProductClaims{Product: product.LinkaPictures, SubjectKey: strings.Repeat("a", 64), ConsentEpoch: &epoch}); err == nil {
+		t.Fatal("legacy token silently discarded a consent epoch")
+	}
+}
+
 func TestProductTokenAcceptsPreviousKey(t *testing.T) {
 	oldKey := ServiceKey{ID: "old", Secret: []byte(strings.Repeat("o", 32))}
 	oldManager, err := NewProductTokens(oldKey, nil, time.Hour)

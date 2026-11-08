@@ -18,13 +18,15 @@ var (
 	ErrIdempotencyConflict = errors.New("idempotency key was already used with a different body")
 	ErrDuplicateRecord     = errors.New("record ID was already used by another batch")
 	ErrSuppressed          = errors.New("telemetry scope is suppressed")
+	ErrConsentConflict     = errors.New("stale or closed consent epoch")
 )
 
 type Scope struct {
-	Product    product.ID `json:"product"`
-	SubjectKey string     `json:"subject_key"`
-	PersonKey  *string    `json:"person_key,omitempty"`
-	OrgKey     *string    `json:"org_key,omitempty"`
+	ConsentEpoch *uint64    `json:"consent_epoch,omitempty"`
+	Product      product.ID `json:"product"`
+	SubjectKey   string     `json:"subject_key"`
+	PersonKey    *string    `json:"person_key,omitempty"`
+	OrgKey       *string    `json:"org_key,omitempty"`
 }
 
 type BatchHeader struct {

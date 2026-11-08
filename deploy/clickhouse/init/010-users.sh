@@ -30,6 +30,7 @@ clickhouse-client \
     GRANT INSERT ON linka_metric.session_summaries TO metric_writer;
     GRANT SELECT ON linka_metric.ingest_batches_v2 TO metric_writer;
     GRANT SELECT ON linka_metric.privacy_suppressions_v2 TO metric_writer;
+	GRANT SELECT, INSERT ON linka_metric.consent_ledger_v2 TO metric_writer;
     GRANT INSERT ON linka_metric.ingest_batches_v2 TO metric_writer;
     GRANT INSERT ON linka_metric.privacy_suppressions_v2 TO metric_writer;
     GRANT INSERT ON linka_metric.common_events_v2 TO metric_writer;

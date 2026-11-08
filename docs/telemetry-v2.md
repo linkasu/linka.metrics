@@ -2,7 +2,7 @@
 
 ## Контракт
 
-Публичный collector предоставляет `POST /v2/batches` и `POST /v2/privacy/requests`. `POST /v2/tokens` является только staging compatibility route. Writer предоставляет соответствующие service-only endpoints `POST /internal/v2/batches` и `POST /internal/v2/privacy/requests`.
+Публичный collector предоставляет `POST /v2/batches`, `POST /v2/privacy/requests` и service-only [`POST /v2/consents`](consent-v2.md). `POST /v2/tokens` является только staging compatibility route. Writer предоставляет соответствующие service-only endpoints под `/internal/v2/`.
 
 Batch ограничен 512 KiB, 500 records, глубиной JSON 16 и одним typed stream: `common`, `technical`, `plays`, `product` или `outcome`. Decoder запрещает duplicate keys, unknown fields, trailing values и чрезмерную вложенность. Product, stream, kinds, states, pages, modes, locales, input methods, game categories, outcomes и game IDs проверяются по compile-time allowlists в `internal/product` и `internal/contract/v2`.
 
@@ -17,6 +17,8 @@ Batch ограничен 512 KiB, 500 records, глубиной JSON 16 и од�
 ## Scope и tokens
 
 Production V2 token выдаёт LINKa Identity и подписывает Ed25519 active key. Collector загружает active и retiring keys из HTTPS JWKS и проверяет точные issuer, audience, product, scope, lifetime, `jti` и pairwise subject claims. Batch scope обязан точно совпасть с claims.
+
+Для managed consent `scope.consent_epoch` batch и claim `consent_epoch` JWT — одинаковый положительный uint64. После первого consent control legacy batch без epoch запрещён. Новый allowed epoch не меняет subject и не возвращает историю закрытых эпох. Consent controls используют отдельный Identity service JWT с единственным scope `consent:write`; формат и порядок rollout описаны в [consent-v2.md](consent-v2.md).
 
 Для server-to-server TTS предусмотрен отдельный opt-in ingress [`POST /internal/tts/outcomes`](tts-outcome-ingestion.md). Он использует отдельный HMAC keyring и фиксированный opaque subject, а не Identity; публичный `/v2/batches` продолжает требовать Identity token.
 
@@ -38,7 +40,7 @@ Writer сериализует check/write внутри процесса, а `rec
 
 Migrations `004+` создают checksum ledger, `ingest_batches_v2`, `privacy_suppressions_v2`, typed `common_events_v2`, `technical_events_v2`, `plays_events_v2`, `product_events_v2`, `product_outcomes_v2` и safe DataLens views. Все V2 data tables partitioned по `ingested_at`; event time не управляет partition lifecycle. Raw opaque keys не выдаются DataLens, suppressed scopes исключаются во view.
 
-`RETENTION_V2_INGEST_BATCHES`, `RETENTION_V2_COMMON`, `RETENTION_V2_TECHNICAL`, `RETENTION_V2_PLAYS`, `RETENTION_V2_PRODUCT`, `RETENTION_V2_OUTCOME`, `RETENTION_V2_REGISTRY` задают 180 дней (`4320h`) для новых событий, batch ledger и registry. `RETENTION_V2_PRIVACY` и `RETENTION_V2_DELETION_PROGRESS` задают 1095 дней (`26280h`) для новых privacy-записей. Активные `opt_out` бессрочны: их удаление могло бы снова раскрыть исторические данные. Все длительности обязательны в production и читаются writer, privacy worker и importer одним parser.
+`RETENTION_V2_INGEST_BATCHES`, `RETENTION_V2_COMMON`, `RETENTION_V2_TECHNICAL`, `RETENTION_V2_PLAYS`, `RETENTION_V2_PRODUCT`, `RETENTION_V2_OUTCOME`, `RETENTION_V2_REGISTRY` задают 180 дней (`4320h`) для новых событий, batch ledger и registry. `RETENTION_V2_PRIVACY` и `RETENTION_V2_DELETION_PROGRESS` задают 1095 дней (`26280h`) для новых privacy-записей. После migration 019 все active suppressions, включая delete, и consent safety ledger бессрочны: их удаление могло бы позволить запоздалому запросу снова включить сбор. Все длительности обязательны в production и читаются writer, privacy worker и importer одним parser.
 
 Migration `017_v2_retention.sql` включает TTL и expiry-фильтры DataLens; миграции 001–016 не изменяются. Исторические `expires_at IS NULL` не заполняются и не удаляются TTL. Privacy TTL не удаляет активные opt-out, незавершённые запросы и незавершённый deletion progress. Физическое TTL-удаление ленивое; views скрывают истёкшие события сразу. Backup имеет отдельную политику и не заменяет TTL.
 

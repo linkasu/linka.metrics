@@ -59,6 +59,12 @@ fi
 created=1
 query "RESTORE DATABASE linka_metric AS $restore FROM File('$archive')"
 [ "$(query "SELECT count() FROM system.tables WHERE database='$restore' AND name IN ('ingest_batches_v2','record_registry_v2','privacy_suppressions_v2','privacy_deletion_progress_v2','common_events_v2','technical_events_v2','plays_events_v2','product_events_v2','product_outcomes_v2') FORMAT TSV")" = 9 ]
+if [ "$(query "EXISTS TABLE linka_metric.consent_ledger_v2 FORMAT TSV")" = 1 ]; then
+  [ "$(query "EXISTS TABLE $restore.consent_ledger_v2 FORMAT TSV")" = 1 ] || {
+    echo 'Backup predates consent safety tombstones; refusing to verify it for this release' >&2
+    exit 1
+  }
+fi
 query "SELECT count() AS restored_product_rows FROM $restore.product_events_v2 FORMAT TSVWithNames"
 printf 'Native backup and isolated restore verified: %s\n' "$archive"
 REMOTE

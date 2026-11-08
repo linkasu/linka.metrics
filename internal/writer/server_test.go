@@ -50,6 +50,11 @@ func (s *fakeStoreV2) CreatePrivacyRequest(context.Context, v2.ValidatedPrivacyR
 	return v2.PrivacyResult{Status: "pending"}, s.err
 }
 
+func (s *fakeStoreV2) CreateConsent(_ context.Context, request v2.ValidatedConsentRequest, _ string) (v2.ConsentResult, error) {
+	s.calls++
+	return v2.ConsentResult{RequestID: request.RequestID, Status: "completed"}, s.err
+}
+
 func (s *fakeStoreV2) CreateLegacyPrivacyRequest(context.Context, v1.ValidatedPrivacyRequest, string) (v2.PrivacyResult, error) {
 	s.calls++
 	return v2.PrivacyResult{Status: "pending"}, s.err

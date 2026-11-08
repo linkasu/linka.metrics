@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/linkasu/linka.plays-metric/internal/auth"
+	v2 "github.com/linkasu/linka.plays-metric/internal/contract/v2"
 )
 
 type HTTPWriter struct {
@@ -20,6 +21,7 @@ type HTTPWriter struct {
 	v2BatchEndpoint     string
 	v2PrivacyEndpoint   string
 	v1PrivacyEndpoint   string
+	consentEndpoint     string
 	fundraisingEndpoint string
 	secret              []byte
 	serviceSigner       *auth.ServiceSigner
@@ -57,6 +59,7 @@ func NewHTTPWriterWithServiceKey(baseURL string, v1Secret []byte, serviceKey aut
 		v1Endpoint: endpoint("/internal/v1/events"), v2BatchEndpoint: endpoint("/internal/v2/batches"),
 		v2PrivacyEndpoint: endpoint("/internal/v2/privacy/requests"), v1PrivacyEndpoint: endpoint("/internal/v1/privacy/requests"),
 		fundraisingEndpoint: endpoint("/internal/fundraising/batches"),
+		consentEndpoint:     endpoint("/internal/v2/consents"),
 		secret:              append([]byte(nil), v1Secret...),
 		serviceSigner:       signer, client: &http.Client{Timeout: timeout}, now: time.Now,
 	}, nil
@@ -130,6 +133,17 @@ func (w *HTTPWriter) WritePrivacy(ctx context.Context, requestID string, body []
 		return privacyWriteResult{}, err
 	}
 	return privacyWriteResult{Status: response.Status, Replayed: response.Replayed}, nil
+}
+
+func (w *HTTPWriter) WriteConsent(ctx context.Context, requestID string, body []byte) (v2.ConsentResult, error) {
+	var result v2.ConsentResult
+	if err := w.callV2(ctx, w.consentEndpoint, requestID, body, &result); err != nil {
+		return v2.ConsentResult{}, err
+	}
+	if result.RequestID != requestID || result.Status != "completed" {
+		return v2.ConsentResult{}, errors.New("writer returned an invalid consent receipt")
+	}
+	return result, nil
 }
 
 func (w *HTTPWriter) callV2(ctx context.Context, endpoint, requestID string, body []byte, destination any) error {

@@ -428,9 +428,11 @@ func (s *Store) analyticsPrivacyRevision(ctx context.Context) (string, error) {
 	ctx, cancel := analyticsContext(ctx)
 	defer cancel()
 	// Only suppression scope/state is hashed; source event payloads never leave ClickHouse.
-	rows, err := s.connection.Query(ctx, `SELECT toJSONString(tuple(product, product_key, subject_key, person_key,
+	rows, err := s.connection.Query(ctx, `SELECT scope_state FROM (SELECT toJSONString(tuple(product, product_key, subject_key, person_key,
 		org_key, active, status, action, ingested_at, updated_at, legacy_installation_id)) AS scope_state
-		FROM privacy_suppressions_v2 FINAL ORDER BY scope_state`)
+		FROM privacy_suppressions_v2 FINAL
+		UNION ALL SELECT toJSONString(tuple('consent', product, subject_key, consent_epoch, version, preference)) AS scope_state
+		FROM consent_ledger_v2 FINAL WHERE applied = true) ORDER BY scope_state`)
 	if err != nil {
 		return "", analyticsStorageError(ctx, err)
 	}

@@ -25,10 +25,7 @@ func (s *Store) InsertV2(ctx context.Context, batch v2.ValidatedBatch, bodySHA s
 		if existingSHA != bodySHA {
 			return v2.IngestResult{}, v2.ErrIdempotencyConflict
 		}
-		if status == "completed" {
-			return v2.IngestResult{Replayed: true, Count: batch.RecordCount()}, nil
-		}
-		if status != "reserved" {
+		if status != "reserved" && status != "completed" {
 			return v2.IngestResult{}, errors.New("invalid v2 batch ledger status")
 		}
 	}
@@ -38,6 +35,16 @@ func (s *Store) InsertV2(ctx context.Context, batch v2.ValidatedBatch, bodySHA s
 	}
 	if suppressed {
 		return v2.IngestResult{}, v2.ErrSuppressed
+	}
+	state, err := s.consentState(ctx, batch.Header.Scope)
+	if err != nil {
+		return v2.IngestResult{}, err
+	}
+	if !consentAllowsBatch(state, batch.Header.Scope.ConsentEpoch) {
+		return v2.IngestResult{}, v2.ErrSuppressed
+	}
+	if exists && status == "completed" {
+		return v2.IngestResult{Replayed: true, Count: batch.RecordCount()}, nil
 	}
 
 	ingestedAt := reservedAt
@@ -126,7 +133,7 @@ func (s *Store) registerRecordsV2(ctx context.Context, batch v2.ValidatedBatch, 
 	}
 	registry, err := s.connection.PrepareBatch(ctx, `INSERT INTO record_registry_v2 (
 		product, record_id, batch_id, stream, body_sha256, registered_at,
-		product_key, subject_key, person_key, org_key, expires_at
+		product_key, subject_key, person_key, org_key, expires_at, consent_epoch
 	)`)
 	if err != nil {
 		return fmt.Errorf("prepare v2 record registry: %w", err)
@@ -134,7 +141,7 @@ func (s *Store) registerRecordsV2(ctx context.Context, batch v2.ValidatedBatch, 
 	for _, recordID := range recordIDs {
 		if err := registry.Append(string(batch.Header.Scope.Product), recordID, batchID, string(batch.Header.Stream), bodySHA, registeredAt,
 			&batch.ProductKey, &batch.Header.Scope.SubjectKey, batch.Header.Scope.PersonKey, batch.Header.Scope.OrgKey,
-			expiresAt(registeredAt, retention)); err != nil {
+			expiresAt(registeredAt, retention), epochValue(batch.Header.Scope.ConsentEpoch)); err != nil {
 			return fmt.Errorf("append v2 record registry: %w", err)
 		}
 	}
@@ -191,11 +198,11 @@ func (s *Store) isSuppressed(ctx context.Context, scope v2.Scope, productKey str
 func (s *Store) insertBatchLedgerV2(ctx context.Context, batch v2.ValidatedBatch, bodySHA string, ingestedAt time.Time, status string, expiry *time.Time) error {
 	err := s.connection.Exec(ctx, `INSERT INTO ingest_batches_v2 (
 		batch_id, idempotency_key, product, product_key, subject_key, person_key, org_key, stream,
-		body_sha256, record_count, sent_at, ingested_at, expires_at, status
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		body_sha256, record_count, sent_at, ingested_at, expires_at, status, consent_epoch
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		uuid.MustParse(batch.Header.BatchID), uuid.MustParse(batch.Header.BatchID), string(batch.Header.Scope.Product), &batch.ProductKey,
 		batch.Header.Scope.SubjectKey, batch.Header.Scope.PersonKey, batch.Header.Scope.OrgKey, string(batch.Header.Stream), bodySHA,
-		uint16(batch.RecordCount()), sqlTime(batch.SentAtTime), sqlTime(ingestedAt), sqlNullableTime(expiry), status,
+		uint16(batch.RecordCount()), sqlTime(batch.SentAtTime), sqlTime(ingestedAt), sqlNullableTime(expiry), status, epochValue(batch.Header.Scope.ConsentEpoch),
 	)
 	if err != nil {
 		return fmt.Errorf("insert v2 batch ledger: %w", err)
@@ -206,7 +213,7 @@ func (s *Store) insertBatchLedgerV2(ctx context.Context, batch v2.ValidatedBatch
 func (s *Store) insertCommonV2(ctx context.Context, input v2.ValidatedBatch, ingestedAt time.Time, retention time.Duration) error {
 	batch, err := s.connection.PrepareBatch(ctx, `INSERT INTO common_events_v2 (
 		product, product_key, subject_key, person_key, org_key, batch_id, record_id, occurred_at, kind,
-		app_session_id, app_version, app_build, platform, os_version, locale, page, mode, ingested_at, expires_at
+		app_session_id, app_version, app_build, platform, os_version, locale, page, mode, ingested_at, expires_at, consent_epoch
 	)`)
 	if err != nil {
 		return fmt.Errorf("prepare common v2 batch: %w", err)
@@ -216,7 +223,7 @@ func (s *Store) insertCommonV2(ctx context.Context, input v2.ValidatedBatch, ing
 			string(input.Header.Scope.Product), &input.ProductKey, input.Header.Scope.SubjectKey, input.Header.Scope.PersonKey, input.Header.Scope.OrgKey,
 			uuid.MustParse(input.Header.BatchID), uuid.MustParse(record.RecordID), record.OccurredAtTime, record.Kind, uuid.MustParse(record.AppSessionID),
 			record.App.Version, record.App.Build, record.App.Platform, record.App.OSVersion, record.App.Locale, record.Page, record.Mode,
-			ingestedAt, expiresAt(ingestedAt, retention),
+			ingestedAt, expiresAt(ingestedAt, retention), epochValue(input.Header.Scope.ConsentEpoch),
 		); err != nil {
 			return fmt.Errorf("append common v2 record: %w", err)
 		}
@@ -231,7 +238,7 @@ func (s *Store) insertTechnicalV2(ctx context.Context, input v2.ValidatedBatch, 
 	batch, err := s.connection.PrepareBatch(ctx, `INSERT INTO technical_events_v2 (
 		product, product_key, subject_key, person_key, org_key, batch_id, record_id, occurred_at, kind,
 		app_session_id, app_version, app_build, platform, os_version, locale, component, state,
-		error_fingerprint, dropped_count, drop_reason, ingested_at, expires_at
+		error_fingerprint, dropped_count, drop_reason, ingested_at, expires_at, consent_epoch
 	)`)
 	if err != nil {
 		return fmt.Errorf("prepare technical v2 batch: %w", err)
@@ -241,7 +248,7 @@ func (s *Store) insertTechnicalV2(ctx context.Context, input v2.ValidatedBatch, 
 			string(input.Header.Scope.Product), &input.ProductKey, input.Header.Scope.SubjectKey, input.Header.Scope.PersonKey, input.Header.Scope.OrgKey,
 			uuid.MustParse(input.Header.BatchID), uuid.MustParse(record.RecordID), record.OccurredAtTime, record.Kind, uuid.MustParse(record.AppSessionID),
 			record.App.Version, record.App.Build, record.App.Platform, record.App.OSVersion, record.App.Locale, record.Component, record.State,
-			record.ErrorFingerprint, record.DroppedCount, record.DropReason, ingestedAt, expiresAt(ingestedAt, retention),
+			record.ErrorFingerprint, record.DroppedCount, record.DropReason, ingestedAt, expiresAt(ingestedAt, retention), epochValue(input.Header.Scope.ConsentEpoch),
 		); err != nil {
 			return fmt.Errorf("append technical v2 record: %w", err)
 		}
@@ -257,7 +264,7 @@ func (s *Store) insertPlaysV2(ctx context.Context, input v2.ValidatedBatch, inge
 		product, product_key, subject_key, person_key, org_key, batch_id, record_id, occurred_at, kind,
 		app_session_id, game_session_id, app_version, app_build, platform, os_version, locale, game_id,
 		game_category, input_method, level_index, outcome, duration_ms, success_count, mistake_count,
-		hint_count, valid_gaze_ratio, ingested_at, expires_at
+		hint_count, valid_gaze_ratio, ingested_at, expires_at, consent_epoch
 	)`)
 	if err != nil {
 		return fmt.Errorf("prepare plays v2 batch: %w", err)
@@ -268,7 +275,7 @@ func (s *Store) insertPlaysV2(ctx context.Context, input v2.ValidatedBatch, inge
 			uuid.MustParse(input.Header.BatchID), uuid.MustParse(record.RecordID), record.OccurredAtTime, record.Kind, uuid.MustParse(record.AppSessionID),
 			uuid.MustParse(record.GameSessionID), record.App.Version, record.App.Build, record.App.Platform, record.App.OSVersion, record.App.Locale,
 			record.GameID, record.GameCategory, record.InputMethod, record.LevelIndex, record.Outcome, record.DurationMS, record.SuccessCount,
-			record.MistakeCount, record.HintCount, record.ValidGazeRatio, ingestedAt, expiresAt(ingestedAt, retention),
+			record.MistakeCount, record.HintCount, record.ValidGazeRatio, ingestedAt, expiresAt(ingestedAt, retention), epochValue(input.Header.Scope.ConsentEpoch),
 		); err != nil {
 			return fmt.Errorf("append plays v2 record: %w", err)
 		}
@@ -282,7 +289,7 @@ func (s *Store) insertPlaysV2(ctx context.Context, input v2.ValidatedBatch, inge
 func (s *Store) insertProductV2(ctx context.Context, input v2.ValidatedBatch, ingestedAt time.Time, retention time.Duration) error {
 	batch, err := s.connection.PrepareBatch(ctx, `INSERT INTO product_events_v2 (
 		product, product_key, subject_key, person_key, org_key, batch_id, record_id, occurred_at, kind,
-		app_session_id, app_version, app_build, platform, os_version, locale, ingested_at, expires_at
+		app_session_id, app_version, app_build, platform, os_version, locale, ingested_at, expires_at, consent_epoch
 	)`)
 	if err != nil {
 		return fmt.Errorf("prepare product v2 batch: %w", err)
@@ -292,7 +299,7 @@ func (s *Store) insertProductV2(ctx context.Context, input v2.ValidatedBatch, in
 			string(input.Header.Scope.Product), &input.ProductKey, input.Header.Scope.SubjectKey, input.Header.Scope.PersonKey, input.Header.Scope.OrgKey,
 			uuid.MustParse(input.Header.BatchID), uuid.MustParse(record.RecordID), record.OccurredAtTime, record.Kind, uuid.MustParse(record.AppSessionID),
 			record.App.Version, record.App.Build, record.App.Platform, record.App.OSVersion, record.App.Locale,
-			ingestedAt, expiresAt(ingestedAt, retention),
+			ingestedAt, expiresAt(ingestedAt, retention), epochValue(input.Header.Scope.ConsentEpoch),
 		); err != nil {
 			return fmt.Errorf("append product v2 record: %w", err)
 		}
@@ -307,7 +314,7 @@ func (s *Store) insertOutcomeV2(ctx context.Context, input v2.ValidatedBatch, in
 	batch, err := s.connection.PrepareBatch(ctx, `INSERT INTO product_outcomes_v2 (
 		product, product_key, subject_key, person_key, org_key, batch_id, record_id, occurred_at, kind,
 		app_session_id, app_version, app_build, platform, os_version, locale, result, source, mode,
-		count_bucket, duration_bucket, failure_code, ingested_at, expires_at
+		count_bucket, duration_bucket, failure_code, ingested_at, expires_at, consent_epoch
 	)`)
 	if err != nil {
 		return fmt.Errorf("prepare outcome v2 batch: %w", err)
@@ -317,7 +324,7 @@ func (s *Store) insertOutcomeV2(ctx context.Context, input v2.ValidatedBatch, in
 			string(input.Header.Scope.Product), &input.ProductKey, input.Header.Scope.SubjectKey, input.Header.Scope.PersonKey, input.Header.Scope.OrgKey,
 			uuid.MustParse(input.Header.BatchID), uuid.MustParse(record.RecordID), record.OccurredAtTime, record.Kind, uuid.MustParse(record.AppSessionID),
 			record.App.Version, record.App.Build, record.App.Platform, record.App.OSVersion, record.App.Locale, record.Result, record.Source, record.Mode,
-			record.CountBucket, record.DurationBucket, record.FailureCode, ingestedAt, expiresAt(ingestedAt, retention),
+			record.CountBucket, record.DurationBucket, record.FailureCode, ingestedAt, expiresAt(ingestedAt, retention), epochValue(input.Header.Scope.ConsentEpoch),
 		); err != nil {
 			return fmt.Errorf("append outcome v2 record: %w", err)
 		}
@@ -351,6 +358,13 @@ func sqlNullableTime(value *time.Time) any {
 func stringValue(value *string) string {
 	if value == nil {
 		return ""
+	}
+	return *value
+}
+
+func epochValue(value *uint64) uint64 {
+	if value == nil {
+		return 0
 	}
 	return *value
 }

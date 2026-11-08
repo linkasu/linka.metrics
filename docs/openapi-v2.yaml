@@ -112,6 +112,39 @@ paths:
           $ref: '#/components/responses/Error'
         '413':
           $ref: '#/components/responses/Error'
+  /v2/consents:
+    post:
+      operationId: recordConsentV2
+      description: Identity service JWT only; subject_type service, exact scope [consent:write], product-specific audience and sub equal to scope.subject_key. No legacy/client token fallback. Stale controls are durable acknowledged no-ops; an allowed epoch may refresh its version, but re-enabling after denial requires a new epoch.
+      security:
+        - consentServiceToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentRequest'
+      responses:
+        '200':
+          description: Durable completed receipt, including a stale no-op or exact-body replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentResult'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: Same request ID with different exact bytes, conflicting equal version, or a non-stale invalid epoch transition.
+        '413':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
   /v2/privacy/requests:
     post:
       operationId: createPrivacyRequestV2
@@ -156,6 +189,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: Identity Ed25519 JWT
+    consentServiceToken:
+      type: http
+      scheme: bearer
+      bearerFormat: Identity Ed25519 service JWT with exact consent:write scope
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -171,6 +208,36 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    ConsentRequest:
+      type: object
+      additionalProperties: false
+      required: [schema_version, request_id, scope, consent_epoch, version, preference, recorded_at]
+      properties:
+        schema_version: { const: 2 }
+        request_id: { type: string, format: uuid }
+        scope:
+          type: object
+          additionalProperties: false
+          required: [product, subject_key]
+          properties:
+            product:
+              $ref: '#/components/schemas/Product'
+            subject_key: { type: string, pattern: '^[a-f0-9]{64}$' }
+        consent_epoch: { type: integer, minimum: 1, maximum: 18446744073709551615 }
+        version: { type: integer, minimum: 1, maximum: 18446744073709551615 }
+        preference: { type: string, enum: [allowed, denied] }
+        recorded_at:
+          type: string
+          format: date-time
+          pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$'
+    ConsentResult:
+      type: object
+      additionalProperties: false
+      required: [request_id, status, replayed]
+      properties:
+        request_id: { type: string, format: uuid }
+        status: { const: completed }
+        replayed: { type: boolean }
     V1PrivacyRequest:
       type: object
       additionalProperties: false
@@ -209,6 +276,28 @@ components:
           oneOf:
             - $ref: '#/components/schemas/OpaqueKey'
             - type: 'null'
+    BatchScope:
+      type: object
+      additionalProperties: false
+      required: [product, subject_key]
+      properties:
+        product:
+          $ref: '#/components/schemas/Product'
+        subject_key:
+          $ref: '#/components/schemas/OpaqueKey'
+        person_key:
+          oneOf:
+            - $ref: '#/components/schemas/OpaqueKey'
+            - type: 'null'
+        org_key:
+          oneOf:
+            - $ref: '#/components/schemas/OpaqueKey'
+            - type: 'null'
+        consent_epoch:
+          type: integer
+          minimum: 1
+          maximum: 18446744073709551615
+          description: Exact match to the Identity telemetry JWT claim. Mandatory once the subject is managed; missing only for unmanaged legacy subjects.
     TokenResponse:
       type: object
       additionalProperties: false
@@ -242,7 +331,7 @@ components:
         schema_version: { const: 2 }
         batch_id: { type: string, format: uuid }
         scope:
-          $ref: '#/components/schemas/Scope'
+          $ref: '#/components/schemas/BatchScope'
         stream: { type: string, enum: [common, technical, plays, product, outcome] }
         sent_at: { type: string, format: date-time }
     Batch:
