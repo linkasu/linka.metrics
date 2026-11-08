@@ -190,6 +190,8 @@ func (s *Store) DeleteTelemetryRequest(ctx context.Context, request privacy.Requ
 			return err
 		}
 	}
+	// Keep consent receipts/closed epochs as minimal safety tombstones, not event
+	// history. Permanent active suppressions also cover person/org deletion scopes.
 	return nil
 }
 

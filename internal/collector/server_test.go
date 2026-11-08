@@ -16,6 +16,7 @@ import (
 
 	"github.com/linkasu/linka.plays-metric/internal/auth"
 	v1 "github.com/linkasu/linka.plays-metric/internal/contract/v1"
+	v2 "github.com/linkasu/linka.plays-metric/internal/contract/v2"
 	"github.com/linkasu/linka.plays-metric/internal/product"
 )
 
@@ -51,6 +52,12 @@ func (w *fakeV2Writer) WriteV2(_ context.Context, _ string, body []byte) (v2Writ
 func (w *fakeV2Writer) WritePrivacy(context.Context, string, []byte) (privacyWriteResult, error) {
 	w.calls++
 	return privacyWriteResult{Status: "pending"}, nil
+}
+
+func (w *fakeV2Writer) WriteConsent(_ context.Context, id string, body []byte) (v2.ConsentResult, error) {
+	w.calls++
+	w.body = append([]byte(nil), body...)
+	return v2.ConsentResult{RequestID: id, Status: "completed"}, nil
 }
 
 func (w *fakeV2Writer) WriteLegacyPrivacy(_ context.Context, _ string, body []byte) (privacyWriteResult, error) {

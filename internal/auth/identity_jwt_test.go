@@ -143,3 +143,41 @@ func signIdentityJWT(t *testing.T, privateKey ed25519.PrivateKey, keyID string, 
 	unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
 	return unsigned + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(unsigned)))
 }
+
+func TestIdentityConsentEpochIsOptionalPositiveUint64(t *testing.T) {
+	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("s", 32)))
+	verifier, err := NewIdentityJWTVerifierWithSource(staticJWKS{"test": key.Public().(ed25519.PublicKey)}, "identity.test", map[product.ID]string{product.LinkaPictures: "pictures-metrics"}, 15*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	claims := IdentityJWTClaims{Issuer: "identity.test", Subject: strings.Repeat("a", 64), Audience: "pictures-metrics", Product: product.LinkaPictures, SubjectType: "installation", Scopes: []string{"telemetry:write"}, IssuedAt: now.Unix(), ExpiresAt: now.Add(5 * time.Minute).Unix(), TokenID: "10000000-0000-4000-8000-000000000001"}
+	base, _ := json.Marshal(claims)
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"EdDSA","typ":"JWT","kid":"test"}`))
+	for _, tc := range []struct {
+		epoch string
+		valid bool
+	}{
+		{"", true}, {"1", true}, {"18446744073709551615", true}, {"0", false}, {"null", false}, {"18446744073709551616", false}, {"-1", false}, {"1.5", false},
+	} {
+		t.Run(tc.epoch, func(t *testing.T) {
+			payload := string(base)
+			if tc.epoch != "" {
+				payload = strings.Replace(payload, `{`, `{"consent_epoch":`+tc.epoch+`,`, 1)
+			}
+			unsigned := header + "." + base64.RawURLEncoding.EncodeToString([]byte(payload))
+			token := unsigned + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, []byte(unsigned)))
+			_, err := verifier.Verify(t.Context(), token, "telemetry:write")
+			if (err == nil) != tc.valid {
+				t.Fatalf("epoch=%s error=%v", tc.epoch, err)
+			}
+		})
+	}
+	var decoded IdentityJWTClaims
+	if err := decodeJWTPart([]byte(`{"sub":"first","sub":"second"}`), &decoded); err == nil {
+		t.Fatal("ambiguous duplicate JWT claims accepted")
+	}
+	if err := decodeJWTPart([]byte(`{} {}`), &decoded); err == nil {
+		t.Fatal("trailing JWT claims accepted")
+	}
+}

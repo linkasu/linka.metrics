@@ -24,6 +24,7 @@ type StoreV2 interface {
 	InsertV2(context.Context, v2.ValidatedBatch, string) (v2.IngestResult, error)
 	CreatePrivacyRequest(context.Context, v2.ValidatedPrivacyRequest, string) (v2.PrivacyResult, error)
 	CreateLegacyPrivacyRequest(context.Context, v1.ValidatedPrivacyRequest, string) (v2.PrivacyResult, error)
+	CreateConsent(context.Context, v2.ValidatedConsentRequest, string) (v2.ConsentResult, error)
 }
 
 type FundraisingStore interface {
@@ -71,6 +72,7 @@ func newServer(store Store, storeV2 StoreV2, fundraisingStore FundraisingStore, 
 	router.Post("/internal/v1/events", server.events)
 	if storeV2 != nil && serviceVerifier != nil {
 		router.Post("/internal/v2/batches", server.batchesV2)
+		router.Post("/internal/v2/consents", server.consentsV2)
 		router.Post("/internal/v2/privacy/requests", server.privacyRequestV2)
 		router.Post("/internal/v1/privacy/requests", server.privacyRequestV1)
 	}

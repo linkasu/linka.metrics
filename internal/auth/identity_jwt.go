@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -16,21 +15,23 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/linkasu/linka.plays-metric/internal/jsonstrict"
 	"github.com/linkasu/linka.plays-metric/internal/product"
 )
 
 type IdentityJWTClaims struct {
-	Issuer      string     `json:"iss"`
-	Subject     string     `json:"sub"`
-	Audience    string     `json:"aud"`
-	Product     product.ID `json:"product"`
-	SubjectType string     `json:"subject_type"`
-	Scopes      []string   `json:"scope"`
-	PersonKey   *string    `json:"person_key,omitempty"`
-	OrgKey      *string    `json:"org_key,omitempty"`
-	IssuedAt    int64      `json:"iat"`
-	ExpiresAt   int64      `json:"exp"`
-	TokenID     string     `json:"jti"`
+	Issuer       string     `json:"iss"`
+	Subject      string     `json:"sub"`
+	Audience     string     `json:"aud"`
+	Product      product.ID `json:"product"`
+	SubjectType  string     `json:"subject_type"`
+	Scopes       []string   `json:"scope"`
+	PersonKey    *string    `json:"person_key,omitempty"`
+	OrgKey       *string    `json:"org_key,omitempty"`
+	ConsentEpoch *uint64    `json:"consent_epoch,omitempty"`
+	IssuedAt     int64      `json:"iat"`
+	ExpiresAt    int64      `json:"exp"`
+	TokenID      string     `json:"jti"`
 }
 
 type JWKSKeySource interface {
@@ -109,6 +110,16 @@ func (v *IdentityJWTVerifier) Verify(ctx context.Context, encoded, requiredScope
 	if err := decodeJWTPart(payload, &claims); err != nil {
 		return IdentityJWTClaims{}, errors.New("invalid Identity JWT claims")
 	}
+	if claims.ConsentEpoch != nil && *claims.ConsentEpoch == 0 {
+		return IdentityJWTClaims{}, errors.New("invalid Identity consent epoch")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return IdentityJWTClaims{}, errors.New("invalid Identity JWT claims")
+	}
+	if _, present := fields["consent_epoch"]; present && claims.ConsentEpoch == nil {
+		return IdentityJWTClaims{}, errors.New("invalid Identity consent epoch")
+	}
 	now := v.now().UTC()
 	issuedAt := time.Unix(claims.IssuedAt, 0)
 	expiresAt := time.Unix(claims.ExpiresAt, 0)
@@ -137,12 +148,7 @@ func validIdentitySubjectType(subjectType string) bool {
 }
 
 func decodeJWTPart(data []byte, destination any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return err
-	}
-	return nil
+	return jsonstrict.DecodeObject(data, destination, jsonstrict.DefaultMaxDepth)
 }
 
 func containsScope(scopes []string, required string) bool {

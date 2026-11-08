@@ -21,6 +21,13 @@ has_column() {
 for column in attempts available_at lease_until legacy_installation_id; do has_column privacy_suppressions_v2 "$column"; done
 for table in privacy_deletion_progress_v2 record_registry_v2; do has_table "$table"; done
 has_column ingest_batches_v2 status
+for table in consent_ledger_v2 consent_subject_state_v2; do has_table "$table"; done
+for table in ingest_batches_v2 record_registry_v2 common_events_v2 technical_events_v2 plays_events_v2 product_events_v2 product_outcomes_v2; do
+  has_column "$table" consent_epoch
+done
+case "$(client "SHOW CREATE TABLE linka_metric.consent_ledger_v2")" in
+  *"TTL "*) exit 1 ;;
+esac
 for column in product_key subject_key person_key org_key; do has_column record_registry_v2 "$column"; done
 for table in product_events_v2 datalens_product_v2; do has_table "$table"; done
 for table in datalens_common_v3 datalens_technical_v3 datalens_plays_v3 datalens_game_sessions_v3; do has_table "$table"; done

@@ -53,6 +53,7 @@ type V2Writer interface {
 	WriteV2(context.Context, string, []byte) (v2WriteResult, error)
 	WritePrivacy(context.Context, string, []byte) (privacyWriteResult, error)
 	WriteLegacyPrivacy(context.Context, string, []byte) (privacyWriteResult, error)
+	WriteConsent(context.Context, string, []byte) (v2.ConsentResult, error)
 }
 
 type FundraisingWriter interface {
@@ -127,6 +128,9 @@ func newServer(writer EventWriter, tokens *auth.InstallationTokens, v2Writer V2W
 		}
 		router.Post("/v2/batches", server.batchesV2)
 		router.Post("/v2/privacy/requests", server.privacyRequestV2)
+	}
+	if v2Writer != nil && identityTokens != nil {
+		router.Post("/v2/consents", server.consentsV2)
 	}
 	return router
 }
@@ -447,7 +451,7 @@ func (s *Server) batchesV2(response http.ResponseWriter, request *http.Request) 
 		httpx.WriteError(response, http.StatusBadRequest, "invalid_idempotency_key")
 		return
 	}
-	if !scopeMatchesClaims(batch.Header.Scope, claims) {
+	if !scopeMatchesClaims(batch.Header.Scope, claims) || !optionalEpochEqual(batch.Header.Scope.ConsentEpoch, claims.ConsentEpoch) {
 		httpx.WriteError(response, http.StatusForbidden, "token_scope_mismatch")
 		return
 	}
@@ -524,7 +528,8 @@ func (s *Server) authenticateProduct(request *http.Request, requiredScope string
 		if err == nil {
 			return auth.ProductClaims{
 				Product: claims.Product, SubjectKey: claims.Subject, PersonKey: claims.PersonKey, OrgKey: claims.OrgKey,
-				IssuedAt: time.Unix(claims.IssuedAt, 0), ExpiresAt: time.Unix(claims.ExpiresAt, 0),
+				ConsentEpoch: claims.ConsentEpoch,
+				IssuedAt:     time.Unix(claims.IssuedAt, 0), ExpiresAt: time.Unix(claims.ExpiresAt, 0),
 			}, nil
 		}
 		if !s.legacyProductTokens {
@@ -539,6 +544,13 @@ func (s *Server) authenticateProduct(request *http.Request, requiredScope string
 
 func scopeMatchesClaims(scope v2.Scope, claims auth.ProductClaims) bool {
 	return scope.Product == claims.Product && scope.SubjectKey == claims.SubjectKey && optionalStringEqual(scope.PersonKey, claims.PersonKey) && optionalStringEqual(scope.OrgKey, claims.OrgKey)
+}
+
+func optionalEpochEqual(left, right *uint64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func optionalStringEqual(left, right *string) bool {
